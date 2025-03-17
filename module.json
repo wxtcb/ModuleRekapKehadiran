@@ -1,0 +1,13 @@
+{
+    "name": "RekapKehadiran",
+    "alias": "rekapkehadiran",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\RekapKehadiran\\Providers\\RekapKehadiranServiceProvider"
+    ],
+    "aliases": {},
+    "files": [],
+    "requires": []
+}
