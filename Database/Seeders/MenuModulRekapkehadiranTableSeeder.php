@@ -18,7 +18,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
         Model::unguard();
 
         Menu::where('modul', 'RekapKehadiran')->delete();
-        $menu = Menu::create([
+        $parent = Menu::create([
             'modul' => 'RekapKehadiran',
             'label' => 'Rekapitulasi',
             'url' => 'rekapkehadiran',
@@ -26,43 +26,37 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
             'icon' => 'fas fa-copy',
             'urut' => 1,
             'parent_id' => 0,
-            'active' => serialize(['RekapKehadiran']),
+            'active' => '',
         ]);
-        if ($menu) {
-            Menu::create([
-                'modul' => 'RekapKehadiran',
-                'label' => 'Kehadiran Pegawai I',
-                'url' => 'rekapkehadiran/pegawai1',
-                'can' => serialize(['admin']),
-                'icon' => 'far fa-circle',
-                'urut' => 1,
-                'parent_id' => $menu->id,
-                'active' => serialize(['rekapkehadiran/pegawai1', 'rekapkehadiran/pegawai1*']),
-            ]);
-        }
-        if ($menu) {
-            Menu::create([
-                'modul' => 'RekapKehadiran',
-                'label' => 'Kehadiran Pegawai II',
-                'url' => 'rekapkehadiran/pegawai2',
-                'can' => serialize(['admin']),
-                'icon' => 'far fa-circle',
-                'urut' => 1,
-                'parent_id' => $menu->id,
-                'active' => serialize(['rekapkehadiran/pegawai2', 'rekapkehadiran/pegawai2*']),
-            ]);
-        }
-        if ($menu) {
-            Menu::create([
-                'modul' => 'RekapKehadiran',
-                'label' => 'Kehadiran Pegawai III',
-                'url' => 'rekapkehadiran/pegawai3',
-                'can' => serialize(['admin']),
-                'icon' => 'far fa-circle',
-                'urut' => 1,
-                'parent_id' => $menu->id,
-                'active' => serialize(['rekapkehadiran/pegawai3', 'rekapkehadiran/pegawai3*']),
-            ]);
-        }
+        Menu::create([
+            'modul' => 'RekapKehadiran',
+            'label' => 'Kehadiran Pegawai I',
+            'url' => 'rekapkehadiran/kehadirani',
+            'can' => serialize(['admin']),
+            'icon' => 'far fa-circle',
+            'urut' => 2,
+            'parent_id' => $parent->id,
+            'active' => serialize(['rekapkehadiran/kehadirani']),
+        ]);
+        Menu::create([
+            'modul' => 'RekapKehadiran',
+            'label' => 'Kehadiran Pegawai II',
+            'url' => 'rekapkehadiran/kehadiranii',
+            'can' => serialize(['admin']),
+            'icon' => 'far fa-circle',
+            'urut' => 2,
+            'parent_id' => $parent->id,
+            'active' => serialize(['rekapkehadiran/kehadiranii']),
+        ]);
+        Menu::create([
+            'modul' => 'RekapKehadiran',
+            'label' => 'Kehadiran Pegawai III',
+            'url' => 'rekapkehadiran/kehadiraniii',
+            'can' => serialize(['admin']),
+            'icon' => 'far fa-circle',
+            'urut' => 2,
+            'parent_id' => $parent->id,
+            'active' => serialize(['rekapkehadiran/kehadiraniii']),
+        ]);
     }
 }
