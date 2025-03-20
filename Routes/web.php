@@ -11,6 +11,18 @@
 |
 */
 
+use Illuminate\Support\Facades\Route;
+
 Route::prefix('rekapkehadiran')->group(function() {
-    Route::get('/', 'RekapKehadiranController@index');
+    Route::prefix('kehadirani')->group(function() {
+        Route::get('/', 'KehadiranIController@index')->name('kehadirani.index');        
+    });
+
+    Route::prefix('kehadiranii')->group(function() {
+        Route::get('/', 'KehadiranIIController@index')->name('kehadiranii.index');        
+    });
+    
+    Route::prefix('kehadiraniii')->group(function() {
+        Route::get('/', 'KehadiranIIIController@index')->name('kehadiraniii.index');        
+    });
 });
