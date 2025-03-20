@@ -5,7 +5,7 @@ namespace Modules\RekapKehadiran\Entities;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
-class KehadiranIIIController extends Model
+class KehadiranIII extends Model
 {
     use HasFactory;
 
@@ -13,6 +13,6 @@ class KehadiranIIIController extends Model
     
     protected static function newFactory()
     {
-        return \Modules\RekapKehadiran\Database\factories\KehadiranIIIControllerFactory::new();
+        return \Modules\RekapKehadiran\Database\factories\KehadiranIIIFactory::new();
     }
 }
