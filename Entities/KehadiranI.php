@@ -9,10 +9,8 @@ class KehadiranI extends Model
 {
     use HasFactory;
 
+    protected $table = 'presensi';
+    protected $primaryKey = 'id';
     protected $fillable = [];
     
-    protected static function newFactory()
-    {
-        return \Modules\RekapKehadiran\Database\factories\KehadiranIFactory::new();
-    }
 }
