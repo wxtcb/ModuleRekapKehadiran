@@ -2,9 +2,12 @@
 
 namespace Modules\RekapKehadiran\Http\Controllers;
 
+use Carbon\Carbon;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Http;
+use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
 
 class KehadiranIController extends Controller
@@ -15,7 +18,37 @@ class KehadiranIController extends Controller
      */
     public function index()
     {
-        return view('rekapkehadiran::kehadirani.index');
+        $kehadiran = KehadiranI::all();
+        $pegawai = Pegawai::all()->keyBy('user_id');
+        
+        // Kelompokkan berdasarkan user_id dan tanggal
+        $rekap = $kehadiran->groupBy(function($item) {
+            return $item->user_id . '|' . date('Y-m-d', strtotime($item->checktime));
+        })->map(function ($items, $key) use ($pegawai) {
+            list($user_id, $tanggal) = explode('|', $key);
+        
+            // Ambil waktu datang (checktype = i)
+            $datangItem = $items->where('checktype', 'I')->sortBy('checktime')->first();
+            $waktuDatang = $datangItem ? explode(' ', $datangItem->checktime)[1] : '-';
+            // dd($datangItem);
+        
+            // Ambil waktu pulang (checktype = o)
+            $pulangItem = $items->where('checktype', 'O')->sortBy('checktime')->last();
+            $waktuPulang = $pulangItem ? explode(' ', $pulangItem->checktime)[1] : '-';
+        
+            $pegawaiData = $pegawai[$user_id] ?? null;
+        
+            return [
+                'nama' => $pegawaiData->nama ?? 'Tidak Diketahui',
+                'nip' => $pegawaiData->nip ?? '-',
+                'tanggal' => $tanggal,
+                'waktu_datang' => $waktuDatang,
+                'waktu_pulang' => $waktuPulang,
+            ];
+        })->values();
+        
+        return view('rekapkehadiran::kehadirani.index', ['rekapPresensi' => $rekap]);
+        
     }
 
     /**
