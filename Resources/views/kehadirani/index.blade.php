@@ -18,34 +18,33 @@
                 </div>
 
                 <table class="table table-bordered">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>NIP</th>
-                            <th>Nama</th>
-                            <th>Tanggal</th>
-                            <th>Jam Masuk</th>
-                            <th>Jam Pulang</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @forelse($rekapPresensi as $index => $data)
-                        <tr>
-                            <td>{{ $index + 1 }}</td>
-                            <td>{{ $data['nip'] }}</td>
-                            <td>{{ $data['nama'] }}</td>
-                            <td>{{ date('d-m-Y', strtotime($data['tanggal'])) }}</td>
-                            <td>{{ $data['waktu_datang'] }}</td>
-                            <td>{{ $data['waktu_pulang'] }}</td>
-                        </tr>
-                        @empty
-                        <tr>
-                            <td colspan="6" class="text-center">Tidak ada data kehadiran.</td>
-                        </tr>
-                        @endforelse
-                    </tbody>
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Nama</th>
+            <th>NIP</th>
+            <th>Jam Masuk</th>
+            <th>Jam Pulang</th>
+            <th>Status</th>
+            <th>Waktu Kerja</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach($rekapPresensi as $index => $data)
+        <tr>
+            <td>{{ $index + 1 }}</td>
+            <td>{{ $data->nip }}</td>
+            <td>{{ $data->nama }}</td>
+            <td>{{ $data->waktu_datang }}</td>
+            <td>{{ $data->waktu_pulang }}</td>
+            <td>{{ $data->status }}</td>
+            <td>{{ $data->durasi_jam }}</td>
+        </tr>
+        @endforeach
+    </tbody>
+</table>
 
-                </table>
+
             </div>
         </div>
     </div>
