@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
@@ -16,56 +17,79 @@ class KehadiranIController extends Controller
      * Display a listing of the resource.
      * @return Renderable
      */
-    public function index()
+    public function index(Request $request)
     {
-        $pegawaiList = Pegawai::select('user_id', 'nama', 'nip')->get()->keyBy('user_id');
-        $kehadiranList = KehadiranI::all();
+        $tanggal = $request->input('tanggal', date('Y-m-d'));
+        $namaQuery = $request->input('nama');
     
-        $rekapPresensi = $kehadiranList->groupBy(function ($item) {
-            return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
-        })->map(function ($items, $key) use ($pegawaiList) {
-            [$userId, $tanggal] = explode('|', $key);
-            $pegawai = $pegawaiList->get($userId);
+        $user = Auth::user(); // Ambil user yang login
     
-            $datang = $items->where('checktype', 'I')->sortBy('checktime')->first();
-            $pulang = $items->where('checktype', 'O')->sortBy('checktime')->last();
+        $pegawaiQuery = Pegawai::query();
+        if ($user->username !== 'super') {
+            $pegawaiQuery->where('username', $user->username);
+        }
     
-            $waktuDatang = $datang ? Carbon::parse($datang->checktime) : null;
-            $waktuPulang = $pulang ? Carbon::parse($pulang->checktime) : null;
+        $pegawaiList = $pegawaiQuery->select('user_id', 'nama', 'nip', 'username')->get();
     
-            // Hitung durasi jam dan menit
-$durasiJam = '-';
-if ($waktuDatang && $waktuPulang) {
-    $diffInSeconds = $waktuDatang->diffInSeconds($waktuPulang);
-    $jam = floor($diffInSeconds / 3600);
-    $menit = floor(($diffInSeconds % 3600) / 60);
-    $durasiJam = "{$jam} jam {$menit} menit";
-}
-
-$status = 'Alpha';
-if ($waktuDatang && $waktuPulang) {
-    $status = 'Hadir';
-} elseif ($waktuDatang && !$waktuPulang) {
-    $status = 'Hadir, lupa presensi pulang';
-} elseif (!$waktuDatang && $waktuPulang) {
-    $status = 'Hadir, lupa presensi datang';
-}
+        // Filter berdasarkan nama jika ada
+        if ($namaQuery) {
+            $pegawaiList = $pegawaiList->filter(function ($pegawai) use ($namaQuery) {
+                return stripos($pegawai->nama, $namaQuery) !== false;
+            });
+        }
     
-            return (object) [
-                'nama' => $pegawai->nama ?? 'Tidak Diketahui',
-                'nip' => $pegawai->nip ?? '-',
+        $kehadiranList = KehadiranI::whereDate('checktime', $tanggal)->get();
+    
+        // Kelompokkan presensi berdasarkan user_id
+        $presensiByUser = $kehadiranList->groupBy('user_id');
+    
+        // Loop semua pegawai, meskipun tidak punya presensi
+        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal) {
+            $userPresensi = $presensiByUser->get($pegawai->user_id, collect());
+    
+            $datang = $userPresensi->where('checktype', 'I')->sortBy('checktime')->first();
+            $pulang = $userPresensi->where('checktype', 'O')->sortBy('checktime')->last();
+    
+            $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
+            $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
+    
+            // Status logika
+            if (!$datang && !$pulang) {
+                $status = 'Alpha';
+            } elseif ($datang && !$pulang) {
+                $status = 'Hadir (Lupa presensi pulang)';
+            } elseif (!$datang && $pulang) {
+                $status = 'Hadir (Lupa presensi datang)';
+            } else {
+                $status = 'Hadir';
+            }
+    
+            // Durasi kerja
+            $durasi_jam = '-';
+            if ($datang && $pulang) {
+                $start = strtotime($datang->checktime);
+                $end = strtotime($pulang->checktime);
+                $diff = $end - $start;
+                $jam = floor($diff / 3600);
+                $menit = floor(($diff % 3600) / 60);
+                $durasi_jam = "{$jam} jam {$menit} menit";
+            }
+    
+            return (object)[
+                'nama' => $pegawai->nama,
+                'nip' => $pegawai->nip,
                 'tanggal' => $tanggal,
-                'waktu_datang' => $waktuDatang ? $waktuDatang->format('H:i') : '-',
-                'waktu_pulang' => $waktuPulang ? $waktuPulang->format('H:i') : '-',
+                'waktu_datang' => $waktuDatang,
+                'waktu_pulang' => $waktuPulang,
                 'status' => $status,
-                'durasi_jam' => $durasiJam,
+                'durasi_jam' => $durasi_jam,
             ];
-        })->values();
+        });
     
         return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi'));
     }
     
-
+    
     /**
      * Show the form for creating a new resource.
      * @return Renderable
