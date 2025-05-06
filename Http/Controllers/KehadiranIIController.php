@@ -2,9 +2,12 @@
 
 namespace Modules\RekapKehadiran\Http\Controllers;
 
+use Carbon\Carbon;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Modules\Pengaturan\Entities\Pegawai;
+use Modules\RekapKehadiran\Entities\KehadiranII;
 
 class KehadiranIIController extends Controller
 {
@@ -12,9 +15,43 @@ class KehadiranIIController extends Controller
      * Display a listing of the resource.
      * @return Renderable
      */
-    public function index()
+    public function index(Request $request)
     {
-        return view('rekapkehadiran::kehadiranii.index');
+        $month = $request->input('month', now()->month);
+        $year = $request->input('year', now()->year);
+
+        $tanggalHari = collect();
+        $totalHari = Carbon::create($year, $month)->daysInMonth;
+
+        for ($i = 1; $i <= $totalHari; $i++) {
+            $tanggalHari->push(Carbon::create($year, $month, $i)->format('Y-m-d'));
+        }
+
+        $pegawaiList = Pegawai::select('user_id', 'nama', 'nip')->get();
+
+        $kehadiran = KehadiranII::whereMonth('checktime', $month)
+                        ->whereYear('checktime', $year)
+                        ->get()
+                        ->groupBy(function ($item) {
+                            return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
+                        });
+
+        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari) {
+            $presensi = [];
+
+            foreach ($tanggalHari as $tanggal) {
+                $key = $pegawai->user_id . '|' . $tanggal;
+                $presensi[] = $kehadiran->has($key) ? 'D' : 'TM';
+            }
+
+            return [
+                'nip' => $pegawai->nip,
+                'nama' => $pegawai->nama,
+                'presensi' => $presensi
+            ];
+        });
+
+        return view('rekapkehadiran::kehadiranii.index', compact('data', 'tanggalHari', 'month', 'year'));
     }
 
     /**
