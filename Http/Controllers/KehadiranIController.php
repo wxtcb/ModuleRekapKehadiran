@@ -22,8 +22,9 @@ class KehadiranIController extends Controller
         $tanggal = $request->input('tanggal', date('Y-m-d'));
         $namaQuery = $request->input('nama');
     
-        $user = Auth::user(); // Ambil user yang login
+        $user = Auth::user(); // User login
     
+        // Ambil pegawai sesuai user login (kecuali super)
         $pegawaiQuery = Pegawai::query();
         if ($user->username !== 'super') {
             $pegawaiQuery->where('username', $user->username);
@@ -31,19 +32,20 @@ class KehadiranIController extends Controller
     
         $pegawaiList = $pegawaiQuery->select('user_id', 'nama', 'nip', 'username')->get();
     
-        // Filter berdasarkan nama jika ada
+        // Filter nama pegawai jika dicari
         if ($namaQuery) {
             $pegawaiList = $pegawaiList->filter(function ($pegawai) use ($namaQuery) {
                 return stripos($pegawai->nama, $namaQuery) !== false;
             });
         }
     
-        $kehadiranList = KehadiranI::whereDate('checktime', $tanggal)->get();
+        // Ambil data presensi dari koneksi second_db
+        $kehadiranList = KehadiranI::on('second_db')
+            ->whereDate('checktime', $tanggal)
+            ->get();
     
-        // Kelompokkan presensi berdasarkan user_id
         $presensiByUser = $kehadiranList->groupBy('user_id');
     
-        // Loop semua pegawai, meskipun tidak punya presensi
         $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal) {
             $userPresensi = $presensiByUser->get($pegawai->user_id, collect());
     
@@ -53,7 +55,7 @@ class KehadiranIController extends Controller
             $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
             $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
     
-            // Status logika
+            // Hitung status
             if (!$datang && !$pulang) {
                 $status = 'Alpha';
             } elseif ($datang && !$pulang) {
@@ -64,7 +66,7 @@ class KehadiranIController extends Controller
                 $status = 'Hadir';
             }
     
-            // Durasi kerja
+            // Hitung durasi
             $durasi_jam = '-';
             if ($datang && $pulang) {
                 $start = strtotime($datang->checktime);
@@ -88,7 +90,6 @@ class KehadiranIController extends Controller
     
         return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi'));
     }
-    
     
     /**
      * Show the form for creating a new resource.
