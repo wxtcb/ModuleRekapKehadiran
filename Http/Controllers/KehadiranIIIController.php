@@ -2,9 +2,12 @@
 
 namespace Modules\RekapKehadiran\Http\Controllers;
 
+use Carbon\Carbon;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Modules\Pengaturan\Entities\Pegawai;
+use Modules\RekapKehadiran\Entities\KehadiranIII;
 
 class KehadiranIIIController extends Controller
 {
@@ -12,9 +15,71 @@ class KehadiranIIIController extends Controller
      * Display a listing of the resource.
      * @return Renderable
      */
-    public function index()
+    public function index(Request $request)
     {
-        return view('rekapkehadiran::kehadiraniii.index');
+        $user = auth()->user();
+        $year = $request->input('year', now()->year);
+    
+        // Ambil pegawai
+        $pegawaiList = $user->hasRole('admin')
+            ? Pegawai::select('user_id', 'nama', 'nip')->get()
+            : Pegawai::where('user_id', $user->id)->select('user_id', 'nama', 'nip')->get();
+    
+        // Ambil semua data presensi tahun ini
+        $kehadiran = KehadiranIII::query()
+            ->whereYear('checktime', $year)
+            ->when(!$user->hasRole('admin'), function ($query) use ($user) {
+                return $query->where('user_id', $user->id);
+            })
+            ->get()
+            ->groupBy(function ($item) {
+                return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
+            });
+    
+        // Hitung jumlah hari kerja (tidak termasuk Sabtu/Minggu)
+        $hariKerja = collect();
+        $start = Carbon::create($year, 1, 1);
+        $end = Carbon::create($year, 12, 31);
+        while ($start <= $end) {
+            if (!$start->isWeekend()) {
+                $hariKerja->push($start->copy()->format('Y-m-d'));
+            }
+            $start->addDay();
+        }
+    
+        // Mapping data pegawai
+        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja) {
+            $total = [
+                'D' => 0,  // Hadir (lengkap I dan O)
+                'TM' => 0, // Tidak lengkap atau tidak hadir
+            ];
+    
+            foreach ($hariKerja as $tanggal) {
+                $key = $pegawai->user_id . '|' . $tanggal;
+                if ($kehadiran->has($key)) {
+                    $absenHariItu = $kehadiran->get($key);
+                    $checktypes = $absenHariItu->pluck('checktype')->unique()->sort()->values();
+    
+                    // Harus ada I dan O agar dianggap hadir
+                    if ($checktypes->contains('I') || $checktypes->contains('O')) {
+                        $total['D']++;
+                    } else {
+                        $total['TM']++;
+                    }
+                } else {
+                    $total['TM']++;
+                }
+            }
+    
+            return [
+                'nip' => $pegawai->nip,
+                'nama' => $pegawai->nama,
+                'keterangan' => 'Dosen',
+                'total' => $total
+            ];
+        });
+    
+        return view('rekapkehadiran::kehadiraniii.index', compact('data', 'year'));
     }
 
     /**
