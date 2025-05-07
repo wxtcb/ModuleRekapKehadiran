@@ -17,42 +17,84 @@ class KehadiranIIController extends Controller
      */
     public function index(Request $request)
     {
+        $user = auth()->user(); // User yang login
         $month = $request->input('month', now()->month);
         $year = $request->input('year', now()->year);
-
+    
         $tanggalHari = collect();
         $totalHari = Carbon::create($year, $month)->daysInMonth;
-
+    
         for ($i = 1; $i <= $totalHari; $i++) {
             $tanggalHari->push(Carbon::create($year, $month, $i)->format('Y-m-d'));
         }
-
-        $pegawaiList = Pegawai::select('user_id', 'nama', 'nip')->get();
-
+    
+        // Jika admin, ambil semua pegawai
+        if ($user->hasRole('admin')) {
+            $pegawaiList = Pegawai::select('user_id', 'nama', 'nip')->get();
+        } else {
+            // Jika bukan admin, hanya ambil dirinya sendiri
+            $pegawaiList = Pegawai::where('user_id', $user->id)
+                ->select('user_id', 'nama', 'nip')
+                ->get();
+        }
+    
         $kehadiran = KehadiranII::whereMonth('checktime', $month)
-                        ->whereYear('checktime', $year)
-                        ->get()
-                        ->groupBy(function ($item) {
-                            return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
-                        });
-
-        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari) {
+            ->whereYear('checktime', $year)
+            ->when(!$user->hasRole('admin'), function ($query) use ($user) {
+                return $query->where('user_id', $user->id);
+            })
+            ->get()
+            ->groupBy(function ($item) {
+                return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
+            });
+    
+        // Hari dan Libur
+        $tanggalHari = collect();
+        $liburIndex = [];
+    
+        for ($i = 1; $i <= $totalHari; $i++) {
+            $tanggal = Carbon::create($year, $month, $i);
+            $tanggalHari->push($tanggal->format('Y-m-d'));
+            $liburIndex[] = in_array($tanggal->dayOfWeek, [Carbon::SATURDAY, Carbon::SUNDAY]);
+        }
+    
+        // Map data
+        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex) {
             $presensi = [];
-
-            foreach ($tanggalHari as $tanggal) {
-                $key = $pegawai->user_id . '|' . $tanggal;
-                $presensi[] = $kehadiran->has($key) ? 'D' : 'TM';
+            $total = [
+                'D' => 0,
+                'TM' => 0,
+                'C' => 0,
+                'T' => 0,
+                'DL' => 0
+            ];
+    
+            foreach ($tanggalHari as $idx => $tanggal) {
+                if ($liburIndex[$idx]) {
+                    $presensi[] = 'L';
+                } else {
+                    $key = $pegawai->user_id . '|' . $tanggal;
+                    if ($kehadiran->has($key)) {
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    } else {
+                        $presensi[] = 'TM';
+                        $total['TM']++;
+                    }
+                }
             }
-
+    
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
-                'presensi' => $presensi
+                'presensi' => $presensi,
+                'total' => $total
             ];
         });
-
+    
         return view('rekapkehadiran::kehadiranii.index', compact('data', 'tanggalHari', 'month', 'year'));
     }
+    
 
     /**
      * Show the form for creating a new resource.

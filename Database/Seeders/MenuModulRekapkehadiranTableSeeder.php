@@ -34,7 +34,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
             'url' => 'rekapkehadiran/kehadirani',
             'can' => serialize(['admin']),
             'icon' => 'far fa-circle',
-            'urut' => 2,
+            'urut' => 1,
             'parent_id' => $parent->id,
             'active' => serialize(['rekapkehadiran/kehadirani']),
         ]);
@@ -54,7 +54,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
             'url' => 'rekapkehadiran/kehadiraniii',
             'can' => serialize(['admin']),
             'icon' => 'far fa-circle',
-            'urut' => 2,
+            'urut' => 3,
             'parent_id' => $parent->id,
             'active' => serialize(['rekapkehadiran/kehadiraniii']),
         ]);
