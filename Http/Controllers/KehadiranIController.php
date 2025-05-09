@@ -23,11 +23,16 @@ class KehadiranIController extends Controller
         $namaQuery = $request->input('nama');
     
         $user = Auth::user(); // User login
+        $isToday = $tanggal === date('Y-m-d');
     
         // Ambil pegawai sesuai user login (kecuali super)
         $pegawaiQuery = Pegawai::query();
+    
         if ($user->username !== 'super') {
-            $pegawaiQuery->where('username', $user->username);
+            // Jika bukan super user dan bukan hari ini, hanya lihat diri sendiri
+            if (!$isToday) {
+                $pegawaiQuery->where('username', $user->username);
+            }
         }
     
         $pegawaiList = $pegawaiQuery->select('user_id', 'nama', 'nip', 'username')->get();
@@ -40,10 +45,19 @@ class KehadiranIController extends Controller
         }
     
         // Ambil data presensi dari koneksi second_db
-        $kehadiranList = KehadiranI::on('second_db')
-            ->whereDate('checktime', $tanggal)
-            ->get();
+        $kehadiranQuery = KehadiranI::on('second_db')->whereDate('checktime', $tanggal);
     
+        // Jika bukan super dan bukan hari ini, filter user_id sesuai user login
+        if ($user->username !== 'super' && !$isToday) {
+            $pegawai = Pegawai::where('username', $user->username)->first();
+            if ($pegawai) {
+                $kehadiranQuery->where('user_id', $pegawai->user_id);
+            } else {
+                $kehadiranQuery->whereNull('user_id'); // Untuk menghindari error jika pegawai tidak ditemukan
+            }
+        }
+    
+        $kehadiranList = $kehadiranQuery->get();
         $presensiByUser = $kehadiranList->groupBy('user_id');
     
         $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal) {
@@ -55,7 +69,6 @@ class KehadiranIController extends Controller
             $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
             $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
     
-            // Hitung status
             if (!$datang && !$pulang) {
                 $status = 'Alpha';
             } elseif ($datang && !$pulang) {
@@ -66,7 +79,6 @@ class KehadiranIController extends Controller
                 $status = 'Hadir';
             }
     
-            // Hitung durasi
             $durasi_jam = '-';
             if ($datang && $pulang) {
                 $start = strtotime($datang->checktime);
@@ -90,6 +102,7 @@ class KehadiranIController extends Controller
     
         return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi'));
     }
+    
     
     /**
      * Show the form for creating a new resource.

@@ -52,10 +52,10 @@
                             <td>{{ $item['nip'] }}</td>
                             <td>{{ $item['nama'] }}</td>
                             <td>{{ $item['total']['D'] }}</td>
-                            <td>0</td>
+                            <td>{{ $item['total']['T'] }}</td>
                             <td>{{ $item['total']['TM'] }}</td>
-                            <td>0</td>
-                            <td>0</td>
+                            <td>{{ $item['total']['C'] }}</td>
+                            <td>{{ $item['total']['DL'] }}</td>
                         </tr>
                         @empty
                         <tr>

@@ -17,27 +17,18 @@ class KehadiranIIController extends Controller
      */
     public function index(Request $request)
     {
-        $user = auth()->user(); // User yang login
+        $user = auth()->user();
         $month = $request->input('month', now()->month);
         $year = $request->input('year', now()->year);
     
-        $tanggalHari = collect();
         $totalHari = Carbon::create($year, $month)->daysInMonth;
     
-        for ($i = 1; $i <= $totalHari; $i++) {
-            $tanggalHari->push(Carbon::create($year, $month, $i)->format('Y-m-d'));
-        }
+        // Ambil list pegawai
+        $pegawaiList = $user->hasRole('admin')
+            ? Pegawai::select('user_id', 'nama', 'nip')->get()
+            : Pegawai::where('user_id', $user->id)->select('user_id', 'nama', 'nip')->get();
     
-        // Jika admin, ambil semua pegawai
-        if ($user->hasRole('admin')) {
-            $pegawaiList = Pegawai::select('user_id', 'nama', 'nip')->get();
-        } else {
-            // Jika bukan admin, hanya ambil dirinya sendiri
-            $pegawaiList = Pegawai::where('user_id', $user->id)
-                ->select('user_id', 'nama', 'nip')
-                ->get();
-        }
-    
+        // Ambil kehadiran bulan & tahun tersebut
         $kehadiran = KehadiranII::whereMonth('checktime', $month)
             ->whereYear('checktime', $year)
             ->when(!$user->hasRole('admin'), function ($query) use ($user) {
@@ -48,7 +39,7 @@ class KehadiranIIController extends Controller
                 return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
             });
     
-        // Hari dan Libur
+        // Buat daftar tanggal dan cek hari libur
         $tanggalHari = collect();
         $liburIndex = [];
     
@@ -58,29 +49,37 @@ class KehadiranIIController extends Controller
             $liburIndex[] = in_array($tanggal->dayOfWeek, [Carbon::SATURDAY, Carbon::SUNDAY]);
         }
     
-        // Map data
+        // Map data presensi
         $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex) {
             $presensi = [];
-            $total = [
-                'D' => 0,
-                'TM' => 0,
-                'C' => 0,
-                'T' => 0,
-                'DL' => 0
-            ];
+            $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
     
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
                     $presensi[] = 'L';
-                } else {
-                    $key = $pegawai->user_id . '|' . $tanggal;
-                    if ($kehadiran->has($key)) {
+                    continue;
+                }
+    
+                $key = $pegawai->user_id . '|' . $tanggal;
+    
+                if ($kehadiran->has($key)) {
+                    $checktypes = $kehadiran[$key]->pluck('checktype')->unique();
+                    $hasI = $checktypes->contains('I');
+                    $hasO = $checktypes->contains('O');
+    
+                    if ($hasI && $hasO) {
                         $presensi[] = 'D';
                         $total['D']++;
+                    } elseif ($hasI || $hasO) {
+                        $presensi[] = 'T';
+                        $total['T']++;
                     } else {
                         $presensi[] = 'TM';
                         $total['TM']++;
                     }
+                } else {
+                    $presensi[] = 'TM';
+                    $total['TM']++;
                 }
             }
     

@@ -19,12 +19,12 @@ class KehadiranIIIController extends Controller
     {
         $user = auth()->user();
         $year = $request->input('year', now()->year);
-    
+
         // Ambil pegawai
         $pegawaiList = $user->hasRole('admin')
             ? Pegawai::select('user_id', 'nama', 'nip')->get()
             : Pegawai::where('user_id', $user->id)->select('user_id', 'nama', 'nip')->get();
-    
+
         // Ambil semua data presensi tahun ini
         $kehadiran = KehadiranIII::query()
             ->whereYear('checktime', $year)
@@ -35,7 +35,7 @@ class KehadiranIIIController extends Controller
             ->groupBy(function ($item) {
                 return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
             });
-    
+
         // Hitung jumlah hari kerja (tidak termasuk Sabtu/Minggu)
         $hariKerja = collect();
         $start = Carbon::create($year, 1, 1);
@@ -46,23 +46,30 @@ class KehadiranIIIController extends Controller
             }
             $start->addDay();
         }
-    
+
         // Mapping data pegawai
         $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja) {
             $total = [
                 'D' => 0,  // Hadir (lengkap I dan O)
                 'TM' => 0, // Tidak lengkap atau tidak hadir
+                'C' => 0,
+                'T' => 0,
+                'DL' => 0
             ];
-    
+
             foreach ($hariKerja as $tanggal) {
                 $key = $pegawai->user_id . '|' . $tanggal;
                 if ($kehadiran->has($key)) {
                     $absenHariItu = $kehadiran->get($key);
                     $checktypes = $absenHariItu->pluck('checktype')->unique()->sort()->values();
-    
-                    // Harus ada I dan O agar dianggap hadir
-                    if ($checktypes->contains('I') || $checktypes->contains('O')) {
+
+                    $hasI = $checktypes->contains('I');
+                    $hasO = $checktypes->contains('O');
+
+                    if ($hasI && $hasO) {
                         $total['D']++;
+                    } elseif ($hasI || $hasO) {
+                        $total['T']++;
                     } else {
                         $total['TM']++;
                     }
@@ -70,7 +77,7 @@ class KehadiranIIIController extends Controller
                     $total['TM']++;
                 }
             }
-    
+
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
@@ -78,7 +85,7 @@ class KehadiranIIIController extends Controller
                 'total' => $total
             ];
         });
-    
+
         return view('rekapkehadiran::kehadiraniii.index', compact('data', 'year'));
     }
 
