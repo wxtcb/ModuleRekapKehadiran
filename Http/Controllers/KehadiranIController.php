@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
+use Modules\Setting\Entities\Libur;
 
 class KehadiranIController extends Controller
 {
@@ -21,46 +22,45 @@ class KehadiranIController extends Controller
     {
         $tanggal = $request->input('tanggal', date('Y-m-d'));
         $namaQuery = $request->input('nama');
-    
-        $user = Auth::user(); // User login
+        
+        $user = Auth::user();
         $isToday = $tanggal === date('Y-m-d');
     
-        // Ambil pegawai sesuai user login (kecuali super)
-        $pegawaiQuery = Pegawai::query();
+        // Cek apakah tanggal adalah hari libur (weekend atau dari tabel Libur)
+        $isWeekend = Carbon::parse($tanggal)->isWeekend();
+        $isLibur = Libur::whereDate('tanggal', $tanggal)->exists();
+        $statusLibur = ($isWeekend || $isLibur);
     
-        if ($user->username !== 'super') {
-            // Jika bukan super user dan bukan hari ini, hanya lihat diri sendiri
-            if (!$isToday) {
-                $pegawaiQuery->where('username', $user->username);
-            }
+        // Ambil pegawai
+        $pegawaiQuery = Pegawai::query();
+        if ($user->username !== 'super' && !$isToday) {
+            $pegawaiQuery->where('username', $user->username);
         }
     
         $pegawaiList = $pegawaiQuery->select('user_id', 'nama', 'nip', 'username')->get();
     
-        // Filter nama pegawai jika dicari
+        // Filter nama
         if ($namaQuery) {
             $pegawaiList = $pegawaiList->filter(function ($pegawai) use ($namaQuery) {
                 return stripos($pegawai->nama, $namaQuery) !== false;
             });
         }
     
-        // Ambil data presensi dari koneksi second_db
+        // Ambil presensi
         $kehadiranQuery = KehadiranI::on('second_db')->whereDate('checktime', $tanggal);
-    
-        // Jika bukan super dan bukan hari ini, filter user_id sesuai user login
         if ($user->username !== 'super' && !$isToday) {
             $pegawai = Pegawai::where('username', $user->username)->first();
             if ($pegawai) {
                 $kehadiranQuery->where('user_id', $pegawai->user_id);
             } else {
-                $kehadiranQuery->whereNull('user_id'); // Untuk menghindari error jika pegawai tidak ditemukan
+                $kehadiranQuery->whereNull('user_id');
             }
         }
     
         $kehadiranList = $kehadiranQuery->get();
         $presensiByUser = $kehadiranList->groupBy('user_id');
     
-        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal) {
+        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal, $statusLibur) {
             $userPresensi = $presensiByUser->get($pegawai->user_id, collect());
     
             $datang = $userPresensi->where('checktype', 'I')->sortBy('checktime')->first();
@@ -69,7 +69,10 @@ class KehadiranIController extends Controller
             $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
             $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
     
-            if (!$datang && !$pulang) {
+            // Jika hari libur, status otomatis Libur
+            if ($statusLibur) {
+                $status = 'Libur';
+            } elseif (!$datang && !$pulang) {
                 $status = 'Alpha';
             } elseif ($datang && !$pulang) {
                 $status = 'Hadir (Lupa presensi pulang)';
@@ -103,7 +106,7 @@ class KehadiranIController extends Controller
         return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi'));
     }
     
-    
+      
     /**
      * Show the form for creating a new resource.
      * @return Renderable

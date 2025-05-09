@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranIII;
+use Modules\Setting\Entities\Libur;
 
 class KehadiranIIIController extends Controller
 {
@@ -19,12 +20,12 @@ class KehadiranIIIController extends Controller
     {
         $user = auth()->user();
         $year = $request->input('year', now()->year);
-
+    
         // Ambil pegawai
         $pegawaiList = $user->hasRole('admin')
             ? Pegawai::select('user_id', 'nama', 'nip')->get()
             : Pegawai::where('user_id', $user->id)->select('user_id', 'nama', 'nip')->get();
-
+    
         // Ambil semua data presensi tahun ini
         $kehadiran = KehadiranIII::query()
             ->whereYear('checktime', $year)
@@ -35,37 +36,44 @@ class KehadiranIIIController extends Controller
             ->groupBy(function ($item) {
                 return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
             });
-
-        // Hitung jumlah hari kerja (tidak termasuk Sabtu/Minggu)
+    
+        // Ambil daftar tanggal libur dari tabel Libur
+        $tanggalLibur = Libur::whereYear('tanggal', $year)->pluck('tanggal')->map(function ($tanggal) {
+            return Carbon::parse($tanggal)->format('Y-m-d');
+        })->toArray();
+    
+        // Hitung hari kerja sebenarnya (bukan weekend & bukan hari libur)
         $hariKerja = collect();
         $start = Carbon::create($year, 1, 1);
         $end = Carbon::create($year, 12, 31);
+    
         while ($start <= $end) {
-            if (!$start->isWeekend()) {
-                $hariKerja->push($start->copy()->format('Y-m-d'));
+            $tanggal = $start->format('Y-m-d');
+            if (!$start->isWeekend() && !in_array($tanggal, $tanggalLibur)) {
+                $hariKerja->push($tanggal);
             }
             $start->addDay();
         }
-
-        // Mapping data pegawai
+    
+        // Mapping data presensi per pegawai
         $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja) {
             $total = [
-                'D' => 0,  // Hadir (lengkap I dan O)
-                'TM' => 0, // Tidak lengkap atau tidak hadir
-                'C' => 0,
-                'T' => 0,
-                'DL' => 0
+                'D' => 0,  // Hadir lengkap
+                'TM' => 0, // Tidak hadir sama sekali
+                'C' => 0,  // Cuti (opsional)
+                'T' => 0,  // Tidak lengkap
+                'DL' => 0  // Dinas luar (opsional)
             ];
-
+    
             foreach ($hariKerja as $tanggal) {
                 $key = $pegawai->user_id . '|' . $tanggal;
                 if ($kehadiran->has($key)) {
                     $absenHariItu = $kehadiran->get($key);
                     $checktypes = $absenHariItu->pluck('checktype')->unique()->sort()->values();
-
+    
                     $hasI = $checktypes->contains('I');
                     $hasO = $checktypes->contains('O');
-
+    
                     if ($hasI && $hasO) {
                         $total['D']++;
                     } elseif ($hasI || $hasO) {
@@ -77,7 +85,7 @@ class KehadiranIIIController extends Controller
                     $total['TM']++;
                 }
             }
-
+    
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
@@ -85,7 +93,7 @@ class KehadiranIIIController extends Controller
                 'total' => $total
             ];
         });
-
+    
         return view('rekapkehadiran::kehadiraniii.index', compact('data', 'year'));
     }
 
