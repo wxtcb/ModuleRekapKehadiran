@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranII;
+use Modules\Setting\Entities\Libur;
 
 class KehadiranIIController extends Controller
 {
@@ -39,14 +40,24 @@ class KehadiranIIController extends Controller
                 return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
             });
     
-        // Buat daftar tanggal dan cek hari libur
+        // Ambil daftar hari libur dari DB Setting
+        $liburTanggal = Libur::whereMonth('tanggal', $month)
+            ->whereYear('tanggal', $year)
+            ->pluck('tanggal')
+            ->map(fn($tgl) => Carbon::parse($tgl)->format('Y-m-d'))
+            ->toArray();
+    
+        // Siapkan tanggal dan libur index
         $tanggalHari = collect();
         $liburIndex = [];
     
         for ($i = 1; $i <= $totalHari; $i++) {
             $tanggal = Carbon::create($year, $month, $i);
-            $tanggalHari->push($tanggal->format('Y-m-d'));
-            $liburIndex[] = in_array($tanggal->dayOfWeek, [Carbon::SATURDAY, Carbon::SUNDAY]);
+            $formatted = $tanggal->format('Y-m-d');
+            $tanggalHari->push($formatted);
+    
+            // Tandai libur jika Sabtu/Minggu atau hari libur di DB
+            $liburIndex[] = in_array($tanggal->dayOfWeek, [Carbon::SATURDAY, Carbon::SUNDAY]) || in_array($formatted, $liburTanggal);
         }
     
         // Map data presensi
@@ -56,7 +67,7 @@ class KehadiranIIController extends Controller
     
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
-                    $presensi[] = 'L';
+                    $presensi[] = 'L'; // Libur
                     continue;
                 }
     
@@ -68,17 +79,17 @@ class KehadiranIIController extends Controller
                     $hasO = $checktypes->contains('O');
     
                     if ($hasI && $hasO) {
-                        $presensi[] = 'D';
+                        $presensi[] = 'D'; // Datang & Pulang lengkap
                         $total['D']++;
                     } elseif ($hasI || $hasO) {
-                        $presensi[] = 'T';
+                        $presensi[] = 'T'; // Tidak lengkap
                         $total['T']++;
                     } else {
-                        $presensi[] = 'TM';
+                        $presensi[] = 'TM'; // Tidak masuk
                         $total['TM']++;
                     }
                 } else {
-                    $presensi[] = 'TM';
+                    $presensi[] = 'TM'; // Tidak ada data kehadiran
                     $total['TM']++;
                 }
             }
@@ -93,7 +104,6 @@ class KehadiranIIController extends Controller
     
         return view('rekapkehadiran::kehadiranii.index', compact('data', 'tanggalHari', 'month', 'year'));
     }
-    
 
     /**
      * Show the form for creating a new resource.
