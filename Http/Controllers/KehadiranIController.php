@@ -25,51 +25,65 @@ class KehadiranIController extends Controller
         
         $user = Auth::user();
         $isToday = $tanggal === date('Y-m-d');
-    
+        $roles = $user->getRoleNames()->toArray();
+
         // Cek apakah tanggal adalah hari libur (weekend atau dari tabel Libur)
         $isWeekend = Carbon::parse($tanggal)->isWeekend();
         $isLibur = Libur::whereDate('tanggal', $tanggal)->exists();
         $statusLibur = ($isWeekend || $isLibur);
-    
-        // Ambil pegawai
+
+        // Ambil semua pegawai jika hari ini DAN role mahasiswa/pegawai/dosen
         $pegawaiQuery = Pegawai::query();
-        if ($user->username !== 'super' && !$isToday) {
-            $pegawaiQuery->where('username', $user->username);
+
+        if (!in_array('super', $roles) && !in_array('admin', $roles)) {
+            // Jika mahasiswa, pegawai, dosen
+            if ($isToday) {
+                // Bisa lihat semua pegawai
+            } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
+                // Bisa lihat dirinya sendiri
+                $pegawaiQuery->where('username', $user->username);
+            } else {
+                // Selain hari ini, mahasiswa tidak bisa lihat apa-apa
+                $pegawaiQuery->whereNull('id'); // Kosongkan hasil
+            }
         }
-    
-        $pegawaiList = $pegawaiQuery->select('user_id', 'nama', 'nip', 'username')->get();
-    
+
+        $pegawaiList = $pegawaiQuery->select('id', 'nama', 'nip', 'username')->get();
+
         // Filter nama
         if ($namaQuery) {
             $pegawaiList = $pegawaiList->filter(function ($pegawai) use ($namaQuery) {
                 return stripos($pegawai->nama, $namaQuery) !== false;
             });
         }
-    
+
         // Ambil presensi
         $kehadiranQuery = KehadiranI::on('second_db')->whereDate('checktime', $tanggal);
-        if ($user->username !== 'super' && !$isToday) {
-            $pegawai = Pegawai::where('username', $user->username)->first();
-            if ($pegawai) {
-                $kehadiranQuery->where('user_id', $pegawai->user_id);
-            } else {
-                $kehadiranQuery->whereNull('user_id');
+
+        // Jika pegawai biasa/dosen, dan bukan hari ini → lihat hanya miliknya
+        if (!in_array('super', $roles) && !in_array('admin', $roles)) {
+            if (!$isToday && (in_array('pegawai', $roles) || in_array('dosen', $roles))) {
+                $pegawai = Pegawai::where('username', $user->username)->first();
+                if ($pegawai) {
+                    $kehadiranQuery->where('user_id', $pegawai->id);
+                } else {
+                    $kehadiranQuery->whereNull('user_id');
+                }
             }
         }
-    
+
         $kehadiranList = $kehadiranQuery->get();
         $presensiByUser = $kehadiranList->groupBy('user_id');
-    
+
         $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal, $statusLibur) {
-            $userPresensi = $presensiByUser->get($pegawai->user_id, collect());
-    
+            $userPresensi = $presensiByUser->get($pegawai->id, collect());
+
             $datang = $userPresensi->where('checktype', 'I')->sortBy('checktime')->first();
             $pulang = $userPresensi->where('checktype', 'O')->sortBy('checktime')->last();
-    
+
             $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
             $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
-    
-            // Jika hari libur, status otomatis Libur
+
             if ($statusLibur) {
                 $status = 'Libur';
             } elseif (!$datang && !$pulang) {
@@ -81,7 +95,7 @@ class KehadiranIController extends Controller
             } else {
                 $status = 'Hadir';
             }
-    
+
             $durasi_jam = '-';
             if ($datang && $pulang) {
                 $start = strtotime($datang->checktime);
@@ -91,7 +105,7 @@ class KehadiranIController extends Controller
                 $menit = floor(($diff % 3600) / 60);
                 $durasi_jam = "{$jam} jam {$menit} menit";
             }
-    
+
             return (object)[
                 'nama' => $pegawai->nama,
                 'nip' => $pegawai->nip,
@@ -102,11 +116,10 @@ class KehadiranIController extends Controller
                 'durasi_jam' => $durasi_jam,
             ];
         });
-    
+
         return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi'));
     }
-    
-      
+
     /**
      * Show the form for creating a new resource.
      * @return Renderable
