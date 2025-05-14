@@ -20,7 +20,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
         Menu::where('modul', 'RekapKehadiran')->delete();
         $parent = Menu::create([
             'modul' => 'RekapKehadiran',
-            'label' => 'Rekapitulasi',
+            'label' => 'Rekap Kehadiran',
             'url' => 'rekapkehadiran',
             'can' => serialize(['admin', 'terdaftar', 'mahasiswa', 'pegawai', 'dosen']),
             'icon' => 'fas fa-copy',
@@ -30,7 +30,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
         ]);
         Menu::create([
             'modul' => 'RekapKehadiran',
-            'label' => 'Kehadiran Pegawai I',
+            'label' => 'Harian',
             'url' => 'rekapkehadiran/kehadirani',
             'can' => serialize(['admin', 'terdaftar', 'mahasiswa', 'pegawai', 'dosen']),
             'icon' => 'far fa-circle',
@@ -40,7 +40,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
         ]);
         Menu::create([
             'modul' => 'RekapKehadiran',
-            'label' => 'Kehadiran Pegawai II',
+            'label' => 'Bulanan',
             'url' => 'rekapkehadiran/kehadiranii',
             'can' => serialize(['admin', 'terdaftar', 'pegawai', 'dosen']),
             'icon' => 'far fa-circle',
@@ -50,7 +50,7 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
         ]);
         Menu::create([
             'modul' => 'RekapKehadiran',
-            'label' => 'Kehadiran Pegawai III',
+            'label' => 'Tahunan',
             'url' => 'rekapkehadiran/kehadiraniii',
             'can' => serialize(['admin', 'terdaftar']),
             'icon' => 'far fa-circle',

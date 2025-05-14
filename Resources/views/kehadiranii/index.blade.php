@@ -31,7 +31,7 @@
                     <a
                         id="download-excel-btn"
                         class="btn btn-info btn-sm"
-                        href="{{ route('rekap-kehadiran.export', ['month' => $month, 'year' => $year]) }}">
+                        href="{{ route('rekap-bulanan.export', ['month' => $month, 'year' => $year]) }}">
                         <i class="fas fa-file-excel"></i> Unduh Excel
                     </a>
                 </div>
@@ -163,7 +163,7 @@
         function updateDownloadLink() {
             const month = monthSelect.value;
             const year = yearSelect.value;
-            const baseUrl = "{{ route('rekap-kehadiran.export') }}";
+            const baseUrl = "{{ route('rekap-bulanan.export') }}";
             downloadBtn.href = `${baseUrl}?month=${month}&year=${year}`;
         }
 
