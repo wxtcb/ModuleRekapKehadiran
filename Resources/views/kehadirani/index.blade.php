@@ -69,7 +69,7 @@
                             <td>
                                 @if(auth()->user()->role_aktif === "admin")
                                 <a
-                                    href="{{ route('rekap-kehadiran.export', [
+                                    href="{{ route('rekap-harian.export', [
                                             'pegawai_id' => \Modules\Pengaturan\Entities\Pegawai::where('nip', $data->nip)->value('id'),
                                             'month' => \Carbon\Carbon::parse(request('tanggal', now()))->month,
                                             'year' => \Carbon\Carbon::parse(request('tanggal', now()))->year,

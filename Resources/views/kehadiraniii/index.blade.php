@@ -87,7 +87,7 @@
     // Unduh file Excel sesuai tahun
     document.getElementById('download-btn').addEventListener('click', function() {
         const year = document.getElementById('year').value;
-        const url = `{{ route('rekap-kehadiran.export') }}?year=${year}`;
+        const url = `{{ route('rekap-tahunan.export') }}?year=${year}`;
         window.location.href = url;
     });
 </script>
