@@ -25,14 +25,23 @@
     <div class="col-12">
         <div class="card">
             <div class="card-body">
-                <h3>Rekapitulasi Kehadiran Pegawai II</h3>
-                <div class="lead">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3 class="mb-0">Rekapitulasi Kehadiran Pegawai II</h3>
 
+                    <a
+                        id="download-excel-btn"
+                        class="btn btn-info btn-sm"
+                        href="{{ route('rekap-kehadiran.export', ['month' => $month, 'year' => $year]) }}">
+                        <i class="fas fa-file-excel"></i> Unduh Excel
+                    </a>
                 </div>
+
+                <div class="lead"></div>
 
                 <div class="mt-2">
                     @include('layouts.partials.messages')
                 </div>
+
 
                 <form method="GET" id="filter-form" class="mb-3 d-flex align-items-center gap-2 small-font">
                     <select name="month" id="month" class="form-control" onchange="document.getElementById('filter-form').submit()">
@@ -70,7 +79,7 @@
                             <div style="width: 50px; height: 40px; background-color: #800080; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold;">DL</div>
                             <div style="margin-left: 10px;">Dinas Luar</div>
                         </div>
-                        
+
                         <!-- T -->
                         <div style="display: flex; align-items: center; width: 250px;">
                             <div style="width: 50px; height: 40px; background-color: #ffa500; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold;">T / WFH</div>
@@ -82,7 +91,7 @@
                             <div style="width: 50px; height: 40px; background-color: #0000ff; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold;">C</div>
                             <div style="margin-left: 10px;">Cuti</div>
                         </div>
-                        
+
 
                         <!-- L -->
                         <div style="display: flex; align-items: center; width: 250px;">
@@ -91,7 +100,6 @@
                         </div>
                     </div>
                 </div>
-
 
                 <div class="scroll-table-wrapper">
                     <table class="table table-bordered small-font">
@@ -143,4 +151,29 @@
         </div>
     </div>
 </div>
+@stop
+@section('adminlte_js')
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const monthSelect = document.getElementById('month');
+        const yearSelect = document.getElementById('year');
+        const downloadBtn = document.getElementById('download-excel-btn');
+
+        function updateDownloadLink() {
+            const month = monthSelect.value;
+            const year = yearSelect.value;
+            const baseUrl = "{{ route('rekap-kehadiran.export') }}";
+            downloadBtn.href = `${baseUrl}?month=${month}&year=${year}`;
+        }
+
+        // Update on change
+        monthSelect.addEventListener('change', updateDownloadLink);
+        yearSelect.addEventListener('change', updateDownloadLink);
+
+        // Set initial URL on page load
+        updateDownloadLink();
+    });
+</script>
+
 @stop

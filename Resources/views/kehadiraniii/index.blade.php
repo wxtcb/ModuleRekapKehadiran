@@ -17,17 +17,23 @@
                     @include('layouts.partials.messages')
                 </div>
 
-                <form method="GET" class="mb-3">
-                    <div class="row g-2 align-items-center">
-                        <div class="col-auto">
-                            <label for="year" class="col-form-label">Pilih Tahun:</label>
-                        </div>
-                        <div class="col-auto">
-                            <select name="year" id="year" class="form-select" onchange="this.form.submit()">
+                <form method="GET" action="" class="mb-3" id="filter-form">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between">
+                        <!-- Pilih Tahun -->
+                        <div class="d-flex align-items-center mb-2 mb-md-0">
+                            <label for="year" class="me-2 col-form-label">Pilih Tahun:</label>
+                            <select name="year" id="year" class="form-select w-auto">
                                 @for($i = now()->year; $i >= 2020; $i--)
-                                <option value="{{ $i }}" {{ $i == $year ? 'selected' : '' }}>{{ $i }}</option>
+                                    <option value="{{ $i }}" {{ $i == $year ? 'selected' : '' }}>{{ $i }}</option>
                                 @endfor
                             </select>
+                        </div>
+
+                        <!-- Tombol Unduh -->
+                        <div>
+                            <button type="button" id="download-btn" class="btn btn-info">
+                                Unduh Excel
+                            </button>
                         </div>
                     </div>
                 </form>
@@ -69,4 +75,21 @@
         </div>
     </div>
 </div>
+@stop
+@section('adminlte_js')
+
+<script>
+    // Submit otomatis saat tahun diubah
+    document.getElementById('year').addEventListener('change', function() {
+        document.getElementById('filter-form').submit();
+    });
+
+    // Unduh file Excel sesuai tahun
+    document.getElementById('download-btn').addEventListener('click', function() {
+        const year = document.getElementById('year').value;
+        const url = `{{ route('rekap-kehadiran.export') }}?year=${year}`;
+        window.location.href = url;
+    });
+</script>
+
 @stop

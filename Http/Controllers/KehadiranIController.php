@@ -8,8 +8,10 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
+use Modules\RekapKehadiran\Exports\RekapKehadiranIExport as RekapKehadiranIExport;
 use Modules\Setting\Entities\Libur;
 
 class KehadiranIController extends Controller
@@ -20,7 +22,7 @@ class KehadiranIController extends Controller
      */
     public function index(Request $request)
     {
-        $tanggal = $request->input('tanggal', date('Y-m-d'));
+        $tanggal = $request->input('tanggal', date("Y-m-d"));
         $namaQuery = $request->input('nama');
         
         $user = Auth::user();
@@ -179,4 +181,14 @@ class KehadiranIController extends Controller
     {
         //
     }
+
+    public function export(Request $request)
+    {
+        $pegawaiId = $request->input('pegawai_id');
+        $month = $request->input('month');
+        $year = $request->input('year');
+
+        return Excel::download(new RekapKehadiranIExport($pegawaiId, $month, $year), 'rekap-kehadiran.xlsx');
+    }
+
 }
