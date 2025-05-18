@@ -7,6 +7,7 @@ use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Maatwebsite\Excel\Facades\Excel;
+use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranII;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIIExport;
@@ -70,36 +71,70 @@ class KehadiranIIController extends Controller
             $liburIndex[] = $tanggal->isWeekend() || in_array($formatted, $liburTanggal);
         }
 
+        // Ambil data cuti pegawai yang disetujui di bulan & tahun yang dimaksud
+        $cutiData = Cuti::where('status', 'Selesai')
+            ->whereIn('pegawai_id', $pegawaiIDs)
+            ->get()
+            ->flatMap(function ($cuti) {
+                $start = Carbon::parse($cuti->tanggal_mulai);
+                $end = Carbon::parse($cuti->tanggal_selesai);
+                $range = [];
+
+                for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                    $range[] = $date->format('Y-m-d');
+                }
+
+                return collect($range)->map(function ($tgl) use ($cuti) {
+                    return [
+                        'pegawai_id' => $cuti->pegawai_id,
+                        'tanggal' => $tgl,
+                    ];
+                });
+            });
+
+        // Group cuti berdasarkan pegawai_id
+        $cutiByPegawai = $cutiData->groupBy('pegawai_id')->map(function ($items) {
+            return $items->pluck('tanggal')->toArray();
+        });
+
         // Proses presensi
-        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex) {
+        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex, $cutiByPegawai) {
             $presensi = [];
             $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
 
+            $cutiTanggal = $cutiByPegawai->get($pegawai->id, []);
+
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
-                    $presensi[] = 'L';
+                    $presensi[] = 'L'; // Libur
+                    continue;
+                }
+
+                if (in_array($tanggal, $cutiTanggal)) {
+                    $presensi[] = 'C'; // Cuti
+                    $total['C']++;
                     continue;
                 }
 
                 $key = $pegawai->id . '|' . $tanggal;
 
-                if ($kehadiran->has($key)) {
+                if (isset($kehadiran[$key])) {
                     $checktypes = $kehadiran[$key]->pluck('checktype')->unique();
                     $hasI = $checktypes->contains('I');
                     $hasO = $checktypes->contains('O');
 
                     if ($hasI && $hasO) {
-                        $presensi[] = 'D';
+                        $presensi[] = 'D'; // Hadir penuh
                         $total['D']++;
                     } elseif ($hasI || $hasO) {
-                        $presensi[] = 'T';
+                        $presensi[] = 'T'; // Hadir sebagian
                         $total['T']++;
                     } else {
-                        $presensi[] = 'TM';
+                        $presensi[] = 'TM'; // Tidak masuk (tidak valid)
                         $total['TM']++;
                     }
                 } else {
-                    $presensi[] = 'TM';
+                    $presensi[] = 'TM'; // Tidak masuk
                     $total['TM']++;
                 }
             }
@@ -179,14 +214,13 @@ class KehadiranIIController extends Controller
     {
         $user = auth()->user();
         $roles = $user->getRoleNames()->toArray();
-
         $totalHari = \Carbon\Carbon::create($year, $month)->daysInMonth;
 
         $pegawaiQuery = Pegawai::query();
 
         if (!in_array('admin', $roles) && !in_array('super', $roles)) {
             if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
-                $pegawaiQuery->whereNull('id'); // Tidak tampilkan apa-apa
+                $pegawaiQuery->whereNull('id');
             } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
                 $pegawaiQuery->where('username', $user->username);
             }
@@ -221,13 +255,43 @@ class KehadiranIIController extends Controller
             $liburIndex[] = $tanggal->isWeekend() || in_array($formatted, $liburTanggal);
         }
 
-        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex) {
+        // Ambil data cuti
+        $cutiData = Cuti::where('status', 'Selesai')
+            ->whereIn('pegawai_id', $pegawaiIDs)
+            ->where(function ($query) use ($month, $year) {
+                $startOfMonth = \Carbon\Carbon::create($year, $month, 1);
+                $endOfMonth = $startOfMonth->copy()->endOfMonth();
+                $query->whereDate('tanggal_mulai', '<=', $endOfMonth)
+                    ->whereDate('tanggal_selesai', '>=', $startOfMonth);
+            })
+            ->get();
+
+        // ✅ Mapping cuti per pegawai dan tanggal
+        $cutiByPegawai = [];
+        foreach ($cutiData as $cuti) {
+            $mulai = \Carbon\Carbon::parse($cuti->tanggal_mulai);
+            $selesai = \Carbon\Carbon::parse($cuti->tanggal_selesai);
+            for ($date = $mulai->copy(); $date->lte($selesai); $date->addDay()) {
+                if ($date->month == $month && $date->year == $year) {
+                    $cutiByPegawai[$cuti->pegawai_id][] = $date->format('Y-m-d');
+                }
+            }
+        }
+
+        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex, $cutiByPegawai) {
             $presensi = [];
             $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
 
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
                     $presensi[] = 'L';
+                    continue;
+                }
+
+                // ✅ Cek apakah tanggal ini termasuk cuti pegawai
+                if (in_array($tanggal, $cutiByPegawai[$pegawai->id] ?? [])) {
+                    $presensi[] = 'C';
+                    $total['C']++;
                     continue;
                 }
 
@@ -280,5 +344,4 @@ class KehadiranIIController extends Controller
             'rekap_kehadiran_' . $month . '_' . $year . '.xlsx'
         );
     }
-
 }
