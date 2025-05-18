@@ -8,7 +8,21 @@
     <div class="col-12">
         <div class="card">
             <div class="card-body">
-                <h3>Rekapitulasi Kehadiran Pegawai I</h3>
+                <h3 class="d-flex justify-content-between align-items-center">
+                    Rekapitulasi Kehadiran Pegawai I
+
+                    @if (!$isAdmin && $pegawaiId)
+                    <a
+                        href="{{ route('rekap-harian.export', [
+                'pegawai_id' => $pegawaiId,
+                'month' => \Carbon\Carbon::parse($tanggal)->month,
+                'year' => \Carbon\Carbon::parse($tanggal)->year,
+            ]) }}"
+                        class="btn btn-success btn-sm">
+                        Unduh Excel Saya
+                    </a>
+                    @endif
+                </h3>
 
                 <form method="GET" class="row mb-3">
                     {{-- Form Pencarian Nama --}}
@@ -53,7 +67,11 @@
                             <th>Jam Pulang</th>
                             <th>Status</th>
                             <th>Waktu Kerja</th>
-                            <th>Download</th> {{-- Kolom baru --}}
+                            @if(auth()->user()->role_aktif === "admin")
+                            <th>
+                                Download
+                            </th>
+                            @endif
                         </tr>
                     </thead>
                     <tbody>
@@ -66,8 +84,8 @@
                             <td>{{ $data->waktu_pulang }}</td>
                             <td>{{ $data->status }}</td>
                             <td>{{ $data->durasi_jam }}</td>
+                            @if(auth()->user()->role_aktif === "admin")
                             <td>
-                                @if(auth()->user()->role_aktif === "admin")
                                 <a
                                     href="{{ route('rekap-harian.export', [
                                             'pegawai_id' => \Modules\Pengaturan\Entities\Pegawai::where('nip', $data->nip)->value('id'),
@@ -77,11 +95,8 @@
                                     class="btn btn-sm btn-info">
                                     Satu Bulan
                                 </a>
-                                
-                                @elseif(in_array(auth()->user()->role_aktif, ['dosen', 'pegawai', 'kajur', 'kaprodi']))
-                                <p>balap</p>
-                                @endif
                             </td>
+                            @endif
                         </tr>
                         @endforeach
                     </tbody>

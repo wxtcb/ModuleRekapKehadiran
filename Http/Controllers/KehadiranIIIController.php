@@ -7,6 +7,7 @@ use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Maatwebsite\Excel\Facades\Excel;
+use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranIII;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIIIExport;
@@ -24,79 +25,6 @@ class KehadiranIIIController extends Controller
         $year = $request->input('year', now()->year);
         $roles = $user->getRoleNames()->toArray();
         $data = $this->getRekapData($request, $year);
-
-        $pegawaiList = Pegawai::query();
-
-        if (!in_array('admin', $roles) && !in_array('super', $roles)) {
-            if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                $pegawaiList->where('id', $user->id);
-            } else {
-                $pegawaiList->whereNull('id');
-            }
-        }
-
-        $pegawaiList = $pegawaiList->select('id', 'nama', 'nip')->get();
-
-        $kehadiran = KehadiranIII::query()
-            ->whereYear('checktime', $year)
-            ->when(!in_array('admin', $roles), function ($query) use ($user, $roles) {
-                if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                    return $query->where('user_id', $user->id);
-                }
-                return $query->whereNull('user_id');
-            })
-            ->get()
-            ->groupBy(function ($item) {
-                return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
-            });
-
-        $tanggalLibur = Libur::whereYear('tanggal', $year)->pluck('tanggal')->map(function ($tanggal) {
-            return Carbon::parse($tanggal)->format('Y-m-d');
-        })->toArray();
-
-        $hariKerja = collect();
-        $start = Carbon::create($year, 1, 1);
-        $end = Carbon::create($year, 12, 31);
-
-        while ($start <= $end) {
-            $tanggal = $start->format('Y-m-d');
-            if (!$start->isWeekend() && !in_array($tanggal, $tanggalLibur)) {
-                $hariKerja->push($tanggal);
-            }
-            $start->addDay();
-        }
-
-        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja) {
-            $total = ['D' => 0, 'TM' => 0, 'C' => 0, 'T' => 0, 'DL' => 0];
-
-            foreach ($hariKerja as $tanggal) {
-                $key = $pegawai->id . '|' . $tanggal;
-
-                if ($kehadiran->has($key)) {
-                    $absenHariItu = $kehadiran->get($key);
-                    $checktypes = $absenHariItu->pluck('checktype')->unique();
-                    $hasI = $checktypes->contains('I');
-                    $hasO = $checktypes->contains('O');
-
-                    if ($hasI && $hasO) {
-                        $total['D']++;
-                    } elseif ($hasI || $hasO) {
-                        $total['T']++;
-                    } else {
-                        $total['TM']++;
-                    }
-                } else {
-                    $total['TM']++;
-                }
-            }
-
-            return [
-                'nip' => $pegawai->nip,
-                'nama' => $pegawai->nama,
-                'keterangan' => 'Dosen',
-                'total' => $total
-            ];
-        });
 
         return view('rekapkehadiran::kehadiraniii.index', compact('data', 'year'));
     }
@@ -177,6 +105,7 @@ class KehadiranIIIController extends Controller
         }
 
         $pegawaiList = $pegawaiList->select('id', 'nama', 'nip')->get();
+        $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
 
         $kehadiran = KehadiranIII::query()
             ->whereYear('checktime', $year)
@@ -195,6 +124,24 @@ class KehadiranIIIController extends Controller
             return \Carbon\Carbon::parse($tanggal)->format('Y-m-d');
         })->toArray();
 
+        // ✅ Ambil data cuti setahun
+        $cuti = Cuti::where('status', 'Selesai')
+            ->whereIn('pegawai_id', $pegawaiIDs)
+            ->whereYear('tanggal_mulai', '<=', $year)
+            ->get();
+
+        // ✅ Mapping cuti per pegawai dan tanggal
+        $cutiByPegawai = [];
+        foreach ($cuti as $item) {
+            $start = \Carbon\Carbon::parse($item->tanggal_mulai);
+            $end = \Carbon\Carbon::parse($item->tanggal_selesai);
+            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                if ($date->year == $year) {
+                    $cutiByPegawai[$item->pegawai_id][] = $date->format('Y-m-d');
+                }
+            }
+        }
+
         $hariKerja = collect();
         $start = \Carbon\Carbon::create($year, 1, 1);
         $end = \Carbon\Carbon::create($year, 12, 31);
@@ -207,10 +154,16 @@ class KehadiranIIIController extends Controller
             $start->addDay();
         }
 
-        return $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja) {
+        return $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja, $cutiByPegawai) {
             $total = ['D' => 0, 'TM' => 0, 'C' => 0, 'T' => 0, 'DL' => 0];
 
             foreach ($hariKerja as $tanggal) {
+                // ✅ Cek cuti dulu
+                if (in_array($tanggal, $cutiByPegawai[$pegawai->id] ?? [])) {
+                    $total['C']++;
+                    continue;
+                }
+
                 $key = $pegawai->id . '|' . $tanggal;
 
                 if ($kehadiran->has($key)) {
@@ -236,7 +189,7 @@ class KehadiranIIIController extends Controller
                 'nama' => $pegawai->nama,
                 'total' => $total
             ];
-        })->toArray(); // penting: array untuk Excel
+        })->toArray(); // array untuk Excel / view
     }
 
     public function export(Request $request)

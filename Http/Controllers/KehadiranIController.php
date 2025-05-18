@@ -9,6 +9,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Maatwebsite\Excel\Facades\Excel;
+use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIExport as RekapKehadiranIExport;
@@ -24,7 +25,7 @@ class KehadiranIController extends Controller
     {
         $tanggal = $request->input('tanggal', date("Y-m-d"));
         $namaQuery = $request->input('nama');
-        
+
         $user = Auth::user();
         $isToday = $tanggal === date('Y-m-d');
         $roles = $user->getRoleNames()->toArray();
@@ -86,8 +87,17 @@ class KehadiranIController extends Controller
             $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
             $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
 
+            // Cek apakah pegawai sedang cuti pada tanggal tersebut
+            $isCuti = Cuti::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Selesai')
+                ->whereDate('tanggal_mulai', '<=', $tanggal)
+                ->whereDate('tanggal_selesai', '>=', $tanggal)
+                ->exists();
+
             if ($statusLibur) {
                 $status = 'Libur';
+            } elseif ($isCuti) {
+                $status = 'Cuti';
             } elseif (!$datang && !$pulang) {
                 $status = 'Alpha';
             } elseif ($datang && !$pulang) {
@@ -119,7 +129,14 @@ class KehadiranIController extends Controller
             ];
         });
 
-        return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi'));
+        $isAdmin = in_array('admin', $roles) || in_array('super', $roles);
+        $pegawaiId = null;
+
+        if (!$isAdmin) {
+            $pegawaiId = Pegawai::where('username', $user->username)->value('id');
+        }
+
+        return view('rekapkehadiran::kehadirani.index', compact('rekapPresensi', 'isAdmin', 'pegawaiId', 'tanggal'));
     }
 
     /**
@@ -190,5 +207,4 @@ class KehadiranIController extends Controller
 
         return Excel::download(new RekapKehadiranIExport($pegawaiId, $month, $year), 'rekap-kehadiran.xlsx');
     }
-
 }
