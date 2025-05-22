@@ -124,13 +124,11 @@ class KehadiranIIIController extends Controller
             return \Carbon\Carbon::parse($tanggal)->format('Y-m-d');
         })->toArray();
 
-        // ✅ Ambil data cuti setahun
         $cuti = Cuti::where('status', 'Selesai')
             ->whereIn('pegawai_id', $pegawaiIDs)
             ->whereYear('tanggal_mulai', '<=', $year)
             ->get();
 
-        // ✅ Mapping cuti per pegawai dan tanggal
         $cutiByPegawai = [];
         foreach ($cuti as $item) {
             $start = \Carbon\Carbon::parse($item->tanggal_mulai);
@@ -158,7 +156,6 @@ class KehadiranIIIController extends Controller
             $total = ['D' => 0, 'TM' => 0, 'C' => 0, 'T' => 0, 'DL' => 0];
 
             foreach ($hariKerja as $tanggal) {
-                // ✅ Cek cuti dulu
                 if (in_array($tanggal, $cutiByPegawai[$pegawai->id] ?? [])) {
                     $total['C']++;
                     continue;
@@ -168,12 +165,24 @@ class KehadiranIIIController extends Controller
 
                 if ($kehadiran->has($key)) {
                     $absenHariItu = $kehadiran->get($key);
-                    $checktypes = $absenHariItu->pluck('checktype')->unique();
-                    $hasI = $checktypes->contains('I');
-                    $hasO = $checktypes->contains('O');
+
+                    $datang = $absenHariItu->where('checktype', 'I')->sortBy('checktime')->first();
+                    $pulang = $absenHariItu->where('checktype', 'O')->sortBy('checktime')->last();
+
+                    $hasI = $datang !== null;
+                    $hasO = $pulang !== null;
 
                     if ($hasI && $hasO) {
-                        $total['D']++;
+                        $jamKerjaDetik = strtotime($pulang->checktime) - strtotime($datang->checktime);
+                        $jamKerjaJam = $jamKerjaDetik / 3600;
+
+                        $minimalJam = str_contains(strtolower($pegawai->nama), 'dosen') ? 4 : 8;
+
+                        if ($jamKerjaJam >= $minimalJam) {
+                            $total['D']++;
+                        } else {
+                            $total['T']++;
+                        }
                     } elseif ($hasI || $hasO) {
                         $total['T']++;
                     } else {
@@ -189,7 +198,7 @@ class KehadiranIIIController extends Controller
                 'nama' => $pegawai->nama,
                 'total' => $total
             ];
-        })->toArray(); // array untuk Excel / view
+        })->toArray();
     }
 
     public function export(Request $request)

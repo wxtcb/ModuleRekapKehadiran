@@ -1,16 +1,17 @@
 <?php
 
-namespace  Modules\RekapKehadiran\Exports;
+namespace Modules\RekapKehadiran\Exports;
 
 use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\FromArray;
-use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithTitle;
 use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
 use Modules\Setting\Entities\Libur;
+use App\Models\JamKerja; // pastikan namespace ini benar sesuai struktur Anda
+use Modules\Setting\Entities\Jam;
 
 class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
 {
@@ -33,7 +34,7 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
         $liburTanggal = Libur::whereMonth('tanggal', $this->month)
             ->whereYear('tanggal', $this->year)
             ->pluck('tanggal')
-            ->map(fn ($tgl) => Carbon::parse($tgl)->format('Y-m-d'))
+            ->map(fn($tgl) => Carbon::parse($tgl)->format('Y-m-d'))
             ->toArray();
 
         $data = [];
@@ -48,12 +49,12 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 ->get();
 
             $datang = $checkins->where('checktype', 'I')->sortBy('checktime')->first();
-            $pulang = $checkins->where('checktype', 'O')->sortBy('checktime')->last();
+            $pulang = $checkins->where('checktype', 'O')->sortByDesc('checktime')->first();
 
             $waktuDatang = $datang ? date('H:i:s', strtotime($datang->checktime)) : '';
             $waktuPulang = $pulang ? date('H:i:s', strtotime($pulang->checktime)) : '';
 
-            // Cek status presensi
+            // Default status
             $status = 'Alpha';
 
             $isLibur = $tanggal->isWeekend() || in_array($tanggalStr, $liburTanggal);
@@ -63,22 +64,44 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 ->whereDate('tanggal_selesai', '>=', $tanggalStr)
                 ->exists();
 
+            // Default minimal jam kerja
+            $jenis = method_exists($pegawai, 'getJenis') ? $pegawai->getJenis() : (str_contains(strtolower($pegawai->nama), 'dosen') ? 'dosen' : 'pegawai');
+            $minimalJamKerja = $jenis === 'dosen' ? 4 : 8;
+
+            // Cek apakah ada pengaturan jam kerja khusus
+            $jamKerjaCustom = Jam::whereDate('tanggal', $tanggalStr)
+                ->where('jenis', $jenis)
+                ->first();
+
+            if ($jamKerjaCustom && $jamKerjaCustom->jam_kerja) {
+                $minimalJamKerja = $jamKerjaCustom->jam_kerja;
+            }
+
+            // Cek durasi kerja
+            $durasi = '-';
+            $jam = 0;
+            if ($datang && $pulang) {
+                $start = Carbon::parse($datang->checktime);
+                $end = Carbon::parse($pulang->checktime);
+                $diffInMinutes = $end->diffInMinutes($start);
+                $jam = floor($diffInMinutes / 60);
+                $menit = $diffInMinutes % 60;
+                $durasi = "{$jam} jam {$menit} menit";
+            }
+
+            // Tentukan status akhir
             if ($isLibur) {
                 $status = 'Libur';
             } elseif ($isCuti) {
                 $status = 'Cuti';
             } elseif ($datang && $pulang) {
-                $status = 'Hadir';
+                if ($jam >= $minimalJamKerja) {
+                    $status = 'Hadir';
+                } else {
+                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                }
             } elseif ($datang || $pulang) {
                 $status = 'Hadir (Lupa presensi)';
-            }
-
-            $durasi = '-';
-            if ($datang && $pulang) {
-                $diff = strtotime($pulang->checktime) - strtotime($datang->checktime);
-                $jam = floor($diff / 3600);
-                $menit = floor(($diff % 3600) / 60);
-                $durasi = "{$jam} jam {$menit} menit";
             }
 
             $data[] = [
