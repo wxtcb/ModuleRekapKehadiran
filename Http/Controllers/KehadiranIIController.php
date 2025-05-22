@@ -11,6 +11,7 @@ use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranII;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIIExport;
+use Modules\Setting\Entities\Jam;
 use Modules\Setting\Entities\Libur;
 
 class KehadiranIIController extends Controller
@@ -119,13 +120,40 @@ class KehadiranIIController extends Controller
                 $key = $pegawai->id . '|' . $tanggal;
 
                 if (isset($kehadiran[$key])) {
-                    $checktypes = $kehadiran[$key]->pluck('checktype')->unique();
-                    $hasI = $checktypes->contains('I');
-                    $hasO = $checktypes->contains('O');
+                    $records = $kehadiran[$key];
+                    $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
+                    $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+
+                    $hasI = !is_null($checkIn);
+                    $hasO = !is_null($checkOut);
 
                     if ($hasI && $hasO) {
-                        $presensi[] = 'D'; // Hadir penuh
-                        $total['D']++;
+                        $start = Carbon::parse($checkIn->checktime);
+                        $end = Carbon::parse($checkOut->checktime);
+                        $durationInHours = $end->floatDiffInHours($start);
+
+                        // Atur default minimal jam kerja
+                        $minimalJamKerja = 8;
+                        if (str_contains(strtolower($pegawai->nama), 'dosen')) {
+                            $minimalJamKerja = 4;
+                        }
+
+                        // Optional: override dari tabel jamkerja
+                        $jenis = str_contains(strtolower($pegawai->nama), 'dosen') ? 'dosen' : 'pegawai';
+                        $jamKerjaCustom = Jam::whereDate('tanggal', $tanggal)
+                            ->where('jenis', $jenis)
+                            ->first();
+                        if ($jamKerjaCustom) {
+                            $minimalJamKerja = $jamKerjaCustom->jam_kerja;
+                        }
+
+                        if ($durationInHours < $minimalJamKerja) {
+                            $presensi[] = 'T'; // Hadir tapi kurang jam
+                            $total['T']++;
+                        } else {
+                            $presensi[] = 'D'; // Hadir penuh
+                            $total['D']++;
+                        }
                     } elseif ($hasI || $hasO) {
                         $presensi[] = 'T'; // Hadir sebagian
                         $total['T']++;
@@ -288,7 +316,6 @@ class KehadiranIIController extends Controller
                     continue;
                 }
 
-                // ✅ Cek apakah tanggal ini termasuk cuti pegawai
                 if (in_array($tanggal, $cutiByPegawai[$pegawai->id] ?? [])) {
                     $presensi[] = 'C';
                     $total['C']++;
@@ -298,13 +325,28 @@ class KehadiranIIController extends Controller
                 $key = $pegawai->id . '|' . $tanggal;
 
                 if ($kehadiran->has($key)) {
-                    $checktypes = $kehadiran[$key]->pluck('checktype')->unique();
-                    $hasI = $checktypes->contains('I');
-                    $hasO = $checktypes->contains('O');
+                    $entri = $kehadiran[$key];
+
+                    $datang = $entri->where('checktype', 'I')->sortBy('checktime')->first();
+                    $pulang = $entri->where('checktype', 'O')->sortBy('checktime')->last();
+
+                    $hasI = $datang !== null;
+                    $hasO = $pulang !== null;
 
                     if ($hasI && $hasO) {
-                        $presensi[] = 'D';
-                        $total['D']++;
+                        $jamKerjaDetik = strtotime($pulang->checktime) - strtotime($datang->checktime);
+                        $jamKerjaJam = $jamKerjaDetik / 3600;
+
+                        // Tentukan minimal jam kerja
+                        $minimalJam = str_contains(strtolower($pegawai->nama), 'dosen') ? 4 : 8;
+
+                        if ($jamKerjaJam >= $minimalJam) {
+                            $presensi[] = 'D';
+                            $total['D']++;
+                        } else {
+                            $presensi[] = 'T';
+                            $total['T']++;
+                        }
                     } elseif ($hasI || $hasO) {
                         $presensi[] = 'T';
                         $total['T']++;

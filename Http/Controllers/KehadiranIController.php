@@ -7,12 +7,12 @@ use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Http;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
-use Modules\RekapKehadiran\Exports\RekapKehadiranIExport as RekapKehadiranIExport;
+use Modules\RekapKehadiran\Exports\RekapKehadiranIExport;
+use Modules\Setting\Entities\Jam;
 use Modules\Setting\Entities\Libur;
 
 class KehadiranIController extends Controller
@@ -78,7 +78,7 @@ class KehadiranIController extends Controller
         $kehadiranList = $kehadiranQuery->get();
         $presensiByUser = $kehadiranList->groupBy('user_id');
 
-        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal, $statusLibur) {
+        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal, $statusLibur, $roles) {
             $userPresensi = $presensiByUser->get($pegawai->id, collect());
 
             $datang = $userPresensi->where('checktype', 'I')->sortBy('checktime')->first();
@@ -94,30 +94,56 @@ class KehadiranIController extends Controller
                 ->whereDate('tanggal_selesai', '>=', $tanggal)
                 ->exists();
 
-            if ($statusLibur) {
-                $status = 'Libur';
-            } elseif ($isCuti) {
-                $status = 'Cuti';
-            } elseif (!$datang && !$pulang) {
-                $status = 'Alpha';
-            } elseif ($datang && !$pulang) {
-                $status = 'Hadir (Lupa presensi pulang)';
-            } elseif (!$datang && $pulang) {
-                $status = 'Hadir (Lupa presensi datang)';
-            } else {
-                $status = 'Hadir';
-            }
+                
+                $durasi_jam = '-';
+                $kurang_dari_jam_kerja = false;
+                
+                if ($datang && $pulang) {
+                    $start = strtotime($datang->checktime);
+                    $end = strtotime($pulang->checktime);
+                    $diff = $end - $start;
+                    $jam = floor($diff / 3600);
+                    $menit = floor(($diff % 3600) / 60);
+                    $durasi_jam = "{$jam} jam {$menit} menit";
+                    
+                    // Ambil minimal jam kerja default
+                    $minimalJamKerja = 8;
+                    if (in_array('dosen', $roles)) {
+                        $minimalJamKerja = 4;
+                    }
+                    
+                    // Cek di tabel jamkerja (override default jika ada)
+                    $jenis = in_array('dosen', $roles) ? 'dosen' : 'pegawai';
 
-            $durasi_jam = '-';
-            if ($datang && $pulang) {
-                $start = strtotime($datang->checktime);
-                $end = strtotime($pulang->checktime);
-                $diff = $end - $start;
-                $jam = floor($diff / 3600);
-                $menit = floor(($diff % 3600) / 60);
-                $durasi_jam = "{$jam} jam {$menit} menit";
-            }
+                    $jamKerjaCustom = Jam::whereDate('tanggal', $tanggal)
+                        ->where('jenis', $jenis)
+                        ->first();
+                    
+                    if ($jamKerjaCustom) {
+                        $minimalJamKerja = $jamKerjaCustom->jam_kerja;
+                    }
+                    
+                    if ($jam + ($menit / 60) < $minimalJamKerja) {
+                        $kurang_dari_jam_kerja = true;
+                    }
+                }
 
+                if ($statusLibur) {
+                    $status = 'Libur';
+                } elseif ($isCuti) {
+                    $status = 'Cuti';
+                } elseif (!$datang && !$pulang) {
+                    $status = 'Alpha';
+                } elseif ($datang && !$pulang) {
+                    $status = 'Hadir (Lupa presensi pulang)';
+                } elseif (!$datang && $pulang) {
+                    $status = 'Hadir (Lupa presensi datang)';
+                } elseif ($kurang_dari_jam_kerja) {
+                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                } else {
+                    $status = 'Hadir';
+                }
+                
             return (object)[
                 'nama' => $pegawai->nama,
                 'nip' => $pegawai->nip,
