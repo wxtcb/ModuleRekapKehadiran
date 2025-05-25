@@ -64,22 +64,41 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 ->whereDate('tanggal_selesai', '>=', $tanggalStr)
                 ->exists();
 
-            // Default minimal jam kerja
-            $jenis = method_exists($pegawai, 'getJenis') ? $pegawai->getJenis() : (str_contains(strtolower($pegawai->nama), 'dosen') ? 'dosen' : 'pegawai');
-            $minimalJamKerja = $jenis === 'dosen' ? 4 : 8;
+            // Ambil role pegawai dari relasi user-role
+            $roles = optional($pegawai->user)->roles->pluck('name')->toArray();
+
+            if (in_array('dosen', $roles)) {
+                $jenis = 'dosen';
+                $minimalJamKerja = 4;
+            } else {
+                $jenis = 'pegawai';
+                $minimalJamKerja = 8;
+            }
 
             // Cek apakah ada pengaturan jam kerja khusus
-            $jamKerjaCustom = Jam::whereDate('tanggal', $tanggalStr)
-                ->where('jenis', $jenis)
+            $jamKerjaCustom = Jam::where('jenis', $jenis)
+                ->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                ->whereDate('tanggal_selesai', '>=', $tanggalStr)
                 ->first();
 
-            if ($jamKerjaCustom && $jamKerjaCustom->jam_kerja) {
-                $minimalJamKerja = $jamKerjaCustom->jam_kerja;
+            if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
+                $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
+                $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
+
+                $pattern = '/(\d+)\s*jam\s*(\d+)\s*menit/';
+                if (preg_match($pattern, $jamKerjaStr, $matches)) {
+                    $jamMinimal = (int)$matches[1];
+                    $menitMinimal = (int)$matches[2];
+                    $minimalJamKerja = $jamMinimal + ($menitMinimal / 60);
+                }
             }
 
             // Cek durasi kerja
             $durasi = '-';
             $jam = 0;
+            $menit = 0;
+            $kurang_dari_jam_kerja = false;
+
             if ($datang && $pulang) {
                 $start = Carbon::parse($datang->checktime);
                 $end = Carbon::parse($pulang->checktime);
@@ -87,21 +106,28 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 $jam = floor($diffInMinutes / 60);
                 $menit = $diffInMinutes % 60;
                 $durasi = "{$jam} jam {$menit} menit";
+
+                if (($jam + ($menit / 60)) < $minimalJamKerja) {
+                    $kurang_dari_jam_kerja = true;
+                }
             }
+
 
             // Tentukan status akhir
             if ($isLibur) {
                 $status = 'Libur';
             } elseif ($isCuti) {
                 $status = 'Cuti';
-            } elseif ($datang && $pulang) {
-                if ($jam >= $minimalJamKerja) {
-                    $status = 'Hadir';
-                } else {
-                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
-                }
-            } elseif ($datang || $pulang) {
-                $status = 'Hadir (Lupa presensi)';
+            } elseif (!$datang && !$pulang) {
+                $status = 'Alpha';
+            } elseif ($datang && !$pulang) {
+                $status = 'Hadir (Lupa presensi pulang)';
+            } elseif (!$datang && $pulang) {
+                $status = 'Hadir (Lupa presensi datang)';
+            } elseif ($kurang_dari_jam_kerja) {
+                $status = 'Hadir (Tidak Mendapat Tunjangan)';
+            } else {
+                $status = 'Hadir';
             }
 
             $data[] = [

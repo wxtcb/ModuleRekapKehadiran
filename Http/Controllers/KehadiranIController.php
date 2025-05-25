@@ -2,11 +2,13 @@
 
 namespace Modules\RekapKehadiran\Http\Controllers;
 
+use App\Models\Core\User;
 use Carbon\Carbon;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
@@ -30,40 +32,32 @@ class KehadiranIController extends Controller
         $isToday = $tanggal === date('Y-m-d');
         $roles = $user->getRoleNames()->toArray();
 
-        // Cek apakah tanggal adalah hari libur (weekend atau dari tabel Libur)
         $isWeekend = Carbon::parse($tanggal)->isWeekend();
         $isLibur = Libur::whereDate('tanggal', $tanggal)->exists();
         $statusLibur = ($isWeekend || $isLibur);
 
-        // Ambil semua pegawai jika hari ini DAN role mahasiswa/pegawai/dosen
         $pegawaiQuery = Pegawai::query();
 
         if (!in_array('super', $roles) && !in_array('admin', $roles)) {
-            // Jika mahasiswa, pegawai, dosen
             if ($isToday) {
                 // Bisa lihat semua pegawai
             } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                // Bisa lihat dirinya sendiri
                 $pegawaiQuery->where('username', $user->username);
             } else {
-                // Selain hari ini, mahasiswa tidak bisa lihat apa-apa
-                $pegawaiQuery->whereNull('id'); // Kosongkan hasil
+                $pegawaiQuery->whereNull('id');
             }
         }
 
         $pegawaiList = $pegawaiQuery->select('id', 'nama', 'nip', 'username')->get();
 
-        // Filter nama
         if ($namaQuery) {
             $pegawaiList = $pegawaiList->filter(function ($pegawai) use ($namaQuery) {
                 return stripos($pegawai->nama, $namaQuery) !== false;
             });
         }
 
-        // Ambil presensi
         $kehadiranQuery = KehadiranI::on('second_db')->whereDate('checktime', $tanggal);
 
-        // Jika pegawai biasa/dosen, dan bukan hari ini → lihat hanya miliknya
         if (!in_array('super', $roles) && !in_array('admin', $roles)) {
             if (!$isToday && (in_array('pegawai', $roles) || in_array('dosen', $roles))) {
                 $pegawai = Pegawai::where('username', $user->username)->first();
@@ -78,7 +72,7 @@ class KehadiranIController extends Controller
         $kehadiranList = $kehadiranQuery->get();
         $presensiByUser = $kehadiranList->groupBy('user_id');
 
-        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal, $statusLibur, $roles) {
+        $rekapPresensi = $pegawaiList->map(function ($pegawai) use ($presensiByUser, $tanggal, $statusLibur) {
             $userPresensi = $presensiByUser->get($pegawai->id, collect());
 
             $datang = $userPresensi->where('checktype', 'I')->sortBy('checktime')->first();
@@ -87,63 +81,74 @@ class KehadiranIController extends Controller
             $waktuDatang = $datang ? date('H:i', strtotime($datang->checktime)) : '-';
             $waktuPulang = $pulang ? date('H:i', strtotime($pulang->checktime)) : '-';
 
-            // Cek apakah pegawai sedang cuti pada tanggal tersebut
             $isCuti = Cuti::where('pegawai_id', $pegawai->id)
                 ->where('status', 'Selesai')
                 ->whereDate('tanggal_mulai', '<=', $tanggal)
                 ->whereDate('tanggal_selesai', '>=', $tanggal)
                 ->exists();
 
-                
-                $durasi_jam = '-';
-                $kurang_dari_jam_kerja = false;
-                
-                if ($datang && $pulang) {
-                    $start = strtotime($datang->checktime);
-                    $end = strtotime($pulang->checktime);
-                    $diff = $end - $start;
-                    $jam = floor($diff / 3600);
-                    $menit = floor(($diff % 3600) / 60);
-                    $durasi_jam = "{$jam} jam {$menit} menit";
-                    
-                    // Ambil minimal jam kerja default
-                    $minimalJamKerja = 8;
-                    if (in_array('dosen', $roles)) {
-                        $minimalJamKerja = 4;
-                    }
-                    
-                    // Cek di tabel jamkerja (override default jika ada)
-                    $jenis = in_array('dosen', $roles) ? 'dosen' : 'pegawai';
+            $durasi_jam = '-';
+            $kurang_dari_jam_kerja = false;
 
-                    $jamKerjaCustom = Jam::whereDate('tanggal', $tanggal)
-                        ->where('jenis', $jenis)
-                        ->first();
-                    
-                    if ($jamKerjaCustom) {
-                        $minimalJamKerja = $jamKerjaCustom->jam_kerja;
-                    }
-                    
-                    if ($jam + ($menit / 60) < $minimalJamKerja) {
-                        $kurang_dari_jam_kerja = true;
+            // Ambil role dari masing-masing pegawai
+            $userPegawai = User::where('username', $pegawai->username)->first();
+            $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
+
+            if ($datang && $pulang) {
+                $start = strtotime($datang->checktime);
+                $end = strtotime($pulang->checktime);
+                $diff = $end - $start;
+                $jam = floor($diff / 3600);
+                $menit = floor(($diff % 3600) / 60);
+                $durasi_jam = "{$jam} jam {$menit} menit";
+
+                $minimalJamKerja = 8;
+                if (in_array('dosen', $pegawaiRoles)) {
+                    $minimalJamKerja = 4;
+                }
+
+                $jenis = in_array('dosen', $pegawaiRoles) ? 'dosen' : 'pegawai';
+
+                $jamKerjaCustom = Jam::where('jenis', $jenis)
+                    ->whereDate('tanggal_mulai', '<=', $tanggal)
+                    ->whereDate('tanggal_selesai', '>=', $tanggal)
+                    ->first();
+
+                if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
+                    $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
+                    $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
+
+                    $pattern = '/(\d+)\s*jam\s*(\d+)\s*menit/';
+                    if (preg_match($pattern, $jamKerjaStr, $matches)) {
+                        $jamMinimal = (int)$matches[1];
+                        $menitMinimal = (int)$matches[2];
+                        $minimalJamKerja = $jamMinimal + ($menitMinimal / 60);
+                    } else {
+                        Log::warning("Format jam_kerja tidak sesuai: " . $jamKerjaCustom->jam_kerja);
                     }
                 }
 
-                if ($statusLibur) {
-                    $status = 'Libur';
-                } elseif ($isCuti) {
-                    $status = 'Cuti';
-                } elseif (!$datang && !$pulang) {
-                    $status = 'Alpha';
-                } elseif ($datang && !$pulang) {
-                    $status = 'Hadir (Lupa presensi pulang)';
-                } elseif (!$datang && $pulang) {
-                    $status = 'Hadir (Lupa presensi datang)';
-                } elseif ($kurang_dari_jam_kerja) {
-                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
-                } else {
-                    $status = 'Hadir';
+                if ($jam + ($menit / 60) < $minimalJamKerja) {
+                    $kurang_dari_jam_kerja = true;
                 }
-                
+            }
+
+            if ($statusLibur) {
+                $status = 'Libur';
+            } elseif ($isCuti) {
+                $status = 'Cuti';
+            } elseif (!$datang && !$pulang) {
+                $status = 'Alpha';
+            } elseif ($datang && !$pulang) {
+                $status = 'Hadir (Lupa presensi pulang)';
+            } elseif (!$datang && $pulang) {
+                $status = 'Hadir (Lupa presensi datang)';
+            } elseif ($kurang_dari_jam_kerja) {
+                $status = 'Hadir (Tidak Mendapat Tunjangan)';
+            } else {
+                $status = 'Hadir';
+            }
+
             return (object)[
                 'nama' => $pegawai->nama,
                 'nip' => $pegawai->nip,
