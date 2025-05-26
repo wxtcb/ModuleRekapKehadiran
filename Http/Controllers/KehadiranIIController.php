@@ -15,6 +15,11 @@ use Modules\RekapKehadiran\Entities\KehadiranII;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIIExport;
 use Modules\Setting\Entities\Jam;
 use Modules\Setting\Entities\Libur;
+use Modules\SuratIjin\Entities\LupaAbsen;
+use Modules\SuratIjin\Entities\Terlambat;
+use Modules\SuratTugas\Entities\AnggotaSuratTugas;
+use Modules\SuratTugas\Entities\DetailSuratTugas;
+use Modules\SuratTugas\Entities\SuratTugas;
 
 class KehadiranIIController extends Controller
 {
@@ -37,27 +42,21 @@ class KehadiranIIController extends Controller
             if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
                 $pegawaiQuery->whereNull('id'); // tidak tampilkan apa-apa
             } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                $pegawaiQuery->where('username', $user->username); // 💡 filter by username
+                $pegawaiQuery->where('username', $user->username);
             }
         }
 
         $pegawaiList = $pegawaiQuery->select('id', 'nama', 'nip', 'username')->get();
-
-        // Dapatkan daftar ID pegawai yang ada
         $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
 
-        // Ambil presensi berdasarkan user_id (== pegawai.id)
         $kehadiran = KehadiranII::whereMonth('checktime', $month)
             ->whereYear('checktime', $year)
             ->when(!in_array('admin', $roles), function ($query) use ($pegawaiIDs) {
                 return $query->whereIn('user_id', $pegawaiIDs);
             })
             ->get()
-            ->groupBy(function ($item) {
-                return $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d');
-            });
+            ->groupBy(fn($item) => $item->user_id . '|' . Carbon::parse($item->checktime)->format('Y-m-d'));
 
-        // Ambil daftar tanggal libur (mingguan & nasional)
         $liburTanggal = Libur::whereMonth('tanggal', $month)
             ->whereYear('tanggal', $year)
             ->pluck('tanggal')
@@ -74,7 +73,6 @@ class KehadiranIIController extends Controller
             $liburIndex[] = $tanggal->isWeekend() || in_array($formatted, $liburTanggal);
         }
 
-        // Ambil data cuti pegawai yang disetujui di bulan & tahun yang dimaksud
         $cutiData = Cuti::where('status', 'Selesai')
             ->whereIn('pegawai_id', $pegawaiIDs)
             ->get()
@@ -87,97 +85,173 @@ class KehadiranIIController extends Controller
                     $range[] = $date->format('Y-m-d');
                 }
 
-                return collect($range)->map(function ($tgl) use ($cuti) {
-                    return [
-                        'pegawai_id' => $cuti->pegawai_id,
-                        'tanggal' => $tgl,
-                    ];
-                });
+                return collect($range)->map(fn($tgl) => [
+                    'pegawai_id' => $cuti->pegawai_id,
+                    'tanggal' => $tgl,
+                ]);
             });
 
-        // Group cuti berdasarkan pegawai_id
-        $cutiByPegawai = $cutiData->groupBy('pegawai_id')->map(function ($items) {
-            return $items->pluck('tanggal')->toArray();
-        });
+        $cutiByPegawai = $cutiData->groupBy('pegawai_id')->map(fn($items) => $items->pluck('tanggal')->toArray());
 
-        // Proses presensi
         $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex, $cutiByPegawai) {
             $presensi = [];
             $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
-
             $cutiTanggal = $cutiByPegawai->get($pegawai->id, []);
+
+            $tanggalHariSort = collect($tanggalHari)->sort();
+            $tanggalAwal  = $tanggalHariSort->first();
+            $tanggalAkhir = $tanggalHariSort->last();
+
+            $dinasLuarTanggal = SuratTugas::with(['detail', 'anggota'])
+                ->where(function ($query) use ($tanggalAwal, $tanggalAkhir) {
+                    $query->whereHas('detail', function ($q) use ($tanggalAwal, $tanggalAkhir) {
+                        $q->whereDate('tanggal_mulai', '<=', $tanggalAkhir)
+                            ->whereDate('tanggal_selesai', '>=', $tanggalAwal);
+                    });
+                })
+                ->get()
+                ->flatMap(function ($surat) use ($pegawai, $tanggalHari) {
+                    $range = [];
+
+                    // Cek apakah pegawai adalah penanggung jawab (detail)
+                    if ($surat->detail && $surat->detail->pegawai_id == $pegawai->id) {
+                        $start = Carbon::parse($surat->detail->tanggal_mulai);
+                        $end = Carbon::parse($surat->detail->tanggal_selesai);
+                        for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                            $range[] = $date->format('Y-m-d');
+                        }
+                    }
+
+                    // Cek apakah pegawai adalah anggota
+                    foreach ($surat->anggota as $anggota) {
+                        if ($anggota->pegawai_id == $pegawai->id && $surat->detail) {
+                            $start = Carbon::parse($surat->detail->tanggal_mulai);
+                            $end = Carbon::parse($surat->detail->tanggal_selesai);
+                            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                                $range[] = $date->format('Y-m-d');
+                            }
+                        }
+                    }
+
+                    return $range;
+                })
+                ->unique()
+                ->toArray();
 
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
-                    $presensi[] = 'L'; // Libur
+                    $presensi[] = 'L';
+                    continue;
+                }
+
+                // ⬅️ Cek DL lebih dulu dari cuti dan kehadiran lainnya
+                if (in_array($tanggal, $dinasLuarTanggal)) {
+                    $presensi[] = 'DL';
+                    $total['DL']++;
                     continue;
                 }
 
                 if (in_array($tanggal, $cutiTanggal)) {
-                    $presensi[] = 'C'; // Cuti
+                    $presensi[] = 'C';
                     $total['C']++;
                     continue;
                 }
 
                 $key = $pegawai->id . '|' . $tanggal;
+                $records = $kehadiran[$key] ?? collect();
 
-                if (isset($kehadiran[$key])) {
-                    $records = $kehadiran[$key];
-                    $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
-                    $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+                $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
+                $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+                $hasI = !is_null($checkIn);
+                $hasO = !is_null($checkOut);
 
-                    $hasI = !is_null($checkIn);
-                    $hasO = !is_null($checkOut);
+                $userPegawai = User::where('username', $pegawai->username)->first();
+                $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
 
-                    if ($hasI && $hasO) {
-                        $start = Carbon::parse($checkIn->checktime);
-                        $end = Carbon::parse($checkOut->checktime);
-                        $durationInHours = $end->floatDiffInHours($start);
+                $jenis = in_array('dosen', $pegawaiRoles) ? 'dosen' : 'pegawai';
+                $minimalJamKerja = ($jenis === 'dosen') ? 4 : 8;
 
-                        // Ambil role asli dari user pegawai
-                        $userPegawai = User::where('username', $pegawai->username)->first();
-                        $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
+                $jamKerjaCustom = Jam::where('jenis', $jenis)
+                    ->whereDate('tanggal_mulai', '<=', $tanggal)
+                    ->whereDate('tanggal_selesai', '>=', $tanggal)
+                    ->first();
 
-                        $jenis = in_array('dosen', $pegawaiRoles) ? 'dosen' : 'pegawai';
-                        $minimalJamKerja = ($jenis === 'dosen') ? 4 : 8;
+                if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
+                    $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
+                    $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
+                    if (preg_match('/(\d+)\s*jam\s*(\d+)\s*menit/', $jamKerjaStr, $matches)) {
+                        $minimalJamKerja = (int)$matches[1] + ((int)$matches[2] / 60);
+                    }
+                }
 
-                        // Cek jam kerja kustom berdasarkan rentang tanggal
-                        $jamKerjaCustom = Jam::where('jenis', $jenis)
-                            ->whereDate('tanggal_mulai', '<=', $tanggal)
-                            ->whereDate('tanggal_selesai', '>=', $tanggal)
-                            ->first();
+                $izinMasukDisetujui = Terlambat::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Terlambat')
+                    ->exists() ||
+                    LupaAbsen::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Lupa Absen Masuk')
+                    ->exists();
 
-                        if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
-                            $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
-                            $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
+                $izinPulangDisetujui = Terlambat::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Pulang Cepat')
+                    ->exists() ||
+                    LupaAbsen::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Lupa Absen Pulang')
+                    ->exists();
 
-                            $pattern = '/(\d+)\s*jam\s*(\d+)\s*menit/';
-                            if (preg_match($pattern, $jamKerjaStr, $matches)) {
-                                $jamMinimal = (int)$matches[1];
-                                $menitMinimal = (int)$matches[2];
-                                $minimalJamKerja = $jamMinimal + ($menitMinimal / 60);
-                            } else {
-                                Log::warning("Format jam_kerja tidak sesuai: " . $jamKerjaCustom->jam_kerja);
-                            }
-                        }
+                if ($hasI && $hasO) {
+                    $start = Carbon::parse($checkIn->checktime);
+                    $end = Carbon::parse($checkOut->checktime);
+                    $durationInHours = $end->floatDiffInHours($start);
 
-                        if ($durationInHours < $minimalJamKerja) {
-                            $presensi[] = 'T'; // Hadir tapi kurang jam
-                            $total['T']++;
-                        } else {
-                            $presensi[] = 'D'; // Hadir penuh
+                    if ($durationInHours < $minimalJamKerja) {
+                        if ($izinMasukDisetujui || $izinPulangDisetujui) {
+                            $presensi[] = 'D';
                             $total['D']++;
+                        } else {
+                            $presensi[] = 'T';
+                            $total['T']++;
                         }
-                    } elseif ($hasI || $hasO) {
-                        $presensi[] = 'T'; // Hadir sebagian
-                        $total['T']++;
                     } else {
-                        $presensi[] = 'TM'; // Tidak masuk (tidak valid)
-                        $total['TM']++;
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    }
+                } elseif ($hasI || $hasO) {
+                    if (($hasI && $izinPulangDisetujui) || ($hasO && $izinMasukDisetujui)) {
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    } else {
+                        $presensi[] = 'T';
+                        $total['T']++;
                     }
                 } else {
-                    $presensi[] = 'TM'; // Tidak masuk
-                    $total['TM']++;
+                    // Tambahan logika: jika tidak absen sama sekali, cek apakah ada izin lengkap
+                    $izinLupaAbsenMasuk = LupaAbsen::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Lupa Absen Masuk')
+                        ->exists();
+
+                    $izinLupaAbsenPulang = LupaAbsen::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Lupa Absen Pulang')
+                        ->exists();
+
+                    if ($izinLupaAbsenMasuk && $izinLupaAbsenPulang) {
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    } else {
+                        $presensi[] = 'TM';
+                        $total['TM']++;
+                    }
                 }
             }
 
@@ -188,7 +262,7 @@ class KehadiranIIController extends Controller
                 'total' => $total
             ];
         });
-
+        // dd($data);
         return view('rekapkehadiran::kehadiranii.index', compact('data', 'tanggalHari', 'month', 'year'));
     }
 
@@ -252,15 +326,16 @@ class KehadiranIIController extends Controller
         //
     }
 
-    private function getRekapData(Request $request, $year)
+    private function getRekapData($month, $year)
     {
         $user = auth()->user();
         $roles = $user->getRoleNames()->toArray();
+        $totalHari = \Carbon\Carbon::create($year, $month)->daysInMonth;
 
         $pegawaiQuery = Pegawai::query();
 
         if (!in_array('admin', $roles) && !in_array('super', $roles)) {
-            if (in_array('mahasiswa', $roles)) {
+            if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
                 $pegawaiQuery->whereNull('id');
             } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
                 $pegawaiQuery->where('username', $user->username);
@@ -270,7 +345,7 @@ class KehadiranIIController extends Controller
         $pegawaiList = $pegawaiQuery->select('id', 'nama', 'nip', 'username')->get();
         $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
 
-        $kehadiran = KehadiranIII::query()
+        $kehadiran = KehadiranII::whereMonth('checktime', $month)
             ->whereYear('checktime', $year)
             ->when(!in_array('admin', $roles), function ($query) use ($pegawaiIDs) {
                 return $query->whereIn('user_id', $pegawaiIDs);
@@ -280,10 +355,21 @@ class KehadiranIIController extends Controller
                 return $item->user_id . '|' . \Carbon\Carbon::parse($item->checktime)->format('Y-m-d');
             });
 
-        $tanggalLibur = Libur::whereYear('tanggal', $year)
+        $liburTanggal = Libur::whereMonth('tanggal', $month)
+            ->whereYear('tanggal', $year)
             ->pluck('tanggal')
             ->map(fn($tgl) => \Carbon\Carbon::parse($tgl)->format('Y-m-d'))
             ->toArray();
+
+        $tanggalHari = collect();
+        $liburIndex = [];
+
+        for ($i = 1; $i <= $totalHari; $i++) {
+            $tanggal = \Carbon\Carbon::create($year, $month, $i);
+            $formatted = $tanggal->format('Y-m-d');
+            $tanggalHari->push($formatted);
+            $liburIndex[] = $tanggal->isWeekend() || in_array($formatted, $liburTanggal);
+        }
 
         $cutiData = Cuti::where('status', 'Selesai')
             ->whereIn('pegawai_id', $pegawaiIDs)
@@ -305,93 +391,182 @@ class KehadiranIIController extends Controller
                 });
             });
 
-        $cutiByPegawai = $cutiData->groupBy('pegawai_id')->map(function ($items) {
-            return $items->pluck('tanggal')->toArray();
-        });
+        $cutiByPegawai = $cutiData->groupBy('pegawai_id')->map(fn($items) => $items->pluck('tanggal')->toArray());
 
-        $hariKerja = collect();
-        $start = \Carbon\Carbon::create($year, 1, 1);
-        $end = \Carbon\Carbon::create($year, 12, 31);
-
-        while ($start <= $end) {
-            $tanggal = $start->format('Y-m-d');
-            if (!$start->isWeekend() && !in_array($tanggal, $tanggalLibur)) {
-                $hariKerja->push($tanggal);
-            }
-            $start->addDay();
-        }
-
-        return $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja, $cutiByPegawai) {
+        $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex, $cutiByPegawai) {
+            $presensi = [];
             $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
             $cutiTanggal = $cutiByPegawai->get($pegawai->id, []);
 
-            $userPegawai = User::where('username', $pegawai->username)->first();
-            $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
-            $jenis = in_array('dosen', $pegawaiRoles) ? 'dosen' : 'pegawai';
+            $tanggalHariSort = collect($tanggalHari)->sort();
+            $tanggalAwal  = $tanggalHariSort->first();
+            $tanggalAkhir = $tanggalHariSort->last();
 
-            foreach ($hariKerja as $tanggal) {
+            $dinasLuarTanggal = SuratTugas::with(['detail', 'anggota'])
+                ->where(function ($query) use ($tanggalAwal, $tanggalAkhir) {
+                    $query->whereHas('detail', function ($q) use ($tanggalAwal, $tanggalAkhir) {
+                        $q->whereDate('tanggal_mulai', '<=', $tanggalAkhir)
+                            ->whereDate('tanggal_selesai', '>=', $tanggalAwal);
+                    });
+                })
+                ->get()
+                ->flatMap(function ($surat) use ($pegawai, $tanggalHari) {
+                    $range = [];
+
+                    // Cek apakah pegawai adalah penanggung jawab (detail)
+                    if ($surat->detail && $surat->detail->pegawai_id == $pegawai->id) {
+                        $start = Carbon::parse($surat->detail->tanggal_mulai);
+                        $end = Carbon::parse($surat->detail->tanggal_selesai);
+                        for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                            $range[] = $date->format('Y-m-d');
+                        }
+                    }
+
+                    // Cek apakah pegawai adalah anggota
+                    foreach ($surat->anggota as $anggota) {
+                        if ($anggota->pegawai_id == $pegawai->id && $surat->detail) {
+                            $start = Carbon::parse($surat->detail->tanggal_mulai);
+                            $end = Carbon::parse($surat->detail->tanggal_selesai);
+                            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                                $range[] = $date->format('Y-m-d');
+                            }
+                        }
+                    }
+
+                    return $range;
+                })
+                ->unique()
+                ->toArray();
+
+            foreach ($tanggalHari as $idx => $tanggal) {
+                if ($liburIndex[$idx]) {
+                    $presensi[] = 'L';
+                    continue;
+                }
+
+                // ⬅️ Cek DL lebih dulu dari cuti dan kehadiran lainnya
+                if (in_array($tanggal, $dinasLuarTanggal)) {
+                    $presensi[] = 'DL';
+                    $total['DL']++;
+                    continue;
+                }
+
                 if (in_array($tanggal, $cutiTanggal)) {
+                    $presensi[] = 'C';
                     $total['C']++;
                     continue;
                 }
 
                 $key = $pegawai->id . '|' . $tanggal;
+                $records = $kehadiran[$key] ?? collect();
 
-                if (isset($kehadiran[$key])) {
-                    $records = $kehadiran[$key];
-                    $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
-                    $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+                $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
+                $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+                $hasI = !is_null($checkIn);
+                $hasO = !is_null($checkOut);
 
-                    $hasI = !is_null($checkIn);
-                    $hasO = !is_null($checkOut);
+                $userPegawai = User::where('username', $pegawai->username)->first();
+                $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
 
-                    if ($hasI && $hasO) {
-                        $start = \Carbon\Carbon::parse($checkIn->checktime);
-                        $end = \Carbon\Carbon::parse($checkOut->checktime);
-                        $durationInHours = $end->floatDiffInHours($start);
+                $jenis = in_array('dosen', $pegawaiRoles) ? 'dosen' : 'pegawai';
+                $minimalJamKerja = ($jenis === 'dosen') ? 4 : 8;
 
-                        // Cek jam kerja custom
-                        $minimalJamKerja = ($jenis === 'dosen') ? 4 : 8;
-                        $jamKerjaCustom = Jam::where('jenis', $jenis)
-                            ->whereDate('tanggal_mulai', '<=', $tanggal)
-                            ->whereDate('tanggal_selesai', '>=', $tanggal)
-                            ->first();
+                $jamKerjaCustom = Jam::where('jenis', $jenis)
+                    ->whereDate('tanggal_mulai', '<=', $tanggal)
+                    ->whereDate('tanggal_selesai', '>=', $tanggal)
+                    ->first();
 
-                        if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
-                            $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
-                            $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
-                            $pattern = '/(\d+)\s*jam\s*(\d+)\s*menit/';
+                if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
+                    $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
+                    $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
+                    if (preg_match('/(\d+)\s*jam\s*(\d+)\s*menit/', $jamKerjaStr, $matches)) {
+                        $minimalJamKerja = (int)$matches[1] + ((int)$matches[2] / 60);
+                    }
+                }
 
-                            if (preg_match($pattern, $jamKerjaStr, $matches)) {
-                                $jamMinimal = (int)$matches[1];
-                                $menitMinimal = (int)$matches[2];
-                                $minimalJamKerja = $jamMinimal + ($menitMinimal / 60);
-                            } else {
-                                \Log::warning("Format jam_kerja tidak sesuai: " . $jamKerjaCustom->jam_kerja);
-                            }
-                        }
+                $izinMasukDisetujui = Terlambat::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Terlambat')
+                    ->exists() ||
+                    LupaAbsen::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Lupa Absen Masuk')
+                    ->exists();
 
-                        if ($durationInHours < $minimalJamKerja) {
-                            $total['T']++;
-                        } else {
+                $izinPulangDisetujui = Terlambat::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Pulang Cepat')
+                    ->exists() ||
+                    LupaAbsen::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggal)
+                    ->where('jenis_ijin', 'Lupa Absen Pulang')
+                    ->exists();
+
+                if ($hasI && $hasO) {
+                    $start = Carbon::parse($checkIn->checktime);
+                    $end = Carbon::parse($checkOut->checktime);
+                    $durationInHours = $end->floatDiffInHours($start);
+
+                    if ($durationInHours < $minimalJamKerja) {
+                        if ($izinMasukDisetujui || $izinPulangDisetujui) {
+                            $presensi[] = 'D';
                             $total['D']++;
+                        } else {
+                            $presensi[] = 'T';
+                            $total['T']++;
                         }
-                    } elseif ($hasI || $hasO) {
-                        $total['T']++;
                     } else {
-                        $total['TM']++;
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    }
+                } elseif ($hasI || $hasO) {
+                    if (($hasI && $izinPulangDisetujui) || ($hasO && $izinMasukDisetujui)) {
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    } else {
+                        $presensi[] = 'T';
+                        $total['T']++;
                     }
                 } else {
-                    $total['TM']++;
+                    // Tambahan logika: jika tidak absen sama sekali, cek apakah ada izin lengkap
+                    $izinLupaAbsenMasuk = LupaAbsen::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Lupa Absen Masuk')
+                        ->exists();
+
+                    $izinLupaAbsenPulang = LupaAbsen::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Lupa Absen Pulang')
+                        ->exists();
+
+                    if ($izinLupaAbsenMasuk && $izinLupaAbsenPulang) {
+                        $presensi[] = 'D';
+                        $total['D']++;
+                    } else {
+                        $presensi[] = 'TM';
+                        $total['TM']++;
+                    }
                 }
             }
 
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
+                'presensi' => $presensi,
                 'total' => $total
             ];
-        })->toArray();
+        });
+
+        return [
+            'data' => $data,
+            'tanggalHari' => $tanggalHari
+        ];
     }
 
     public function export(Request $request)

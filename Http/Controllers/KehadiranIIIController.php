@@ -15,6 +15,9 @@ use Modules\RekapKehadiran\Entities\KehadiranIII;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIIIExport;
 use Modules\Setting\Entities\Jam;
 use Modules\Setting\Entities\Libur;
+use Modules\SuratIjin\Entities\LupaAbsen;
+use Modules\SuratIjin\Entities\Terlambat;
+use Modules\SuratTugas\Entities\SuratTugas;
 
 class KehadiranIIIController extends Controller
 {
@@ -92,143 +95,204 @@ class KehadiranIIIController extends Controller
         //
     }
 
-private function getRekapData(Request $request, $year)
-{
-    $user = auth()->user();
-    $roles = $user->getRoleNames()->toArray();
+    private function getRekapData(Request $request, $year)
+    {
+        $user = auth()->user();
+        $roles = $user->getRoleNames()->toArray();
 
-    $pegawaiList = Pegawai::query();
+        $pegawaiList = Pegawai::query();
 
-    if (!in_array('admin', $roles) && !in_array('super', $roles)) {
-        if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-            $pegawaiList->where('username', $user->username);
-        } else {
-            $pegawaiList->whereNull('id');
-        }
-    }
-
-    $pegawaiList = $pegawaiList->select('id', 'nama', 'nip', 'username')->get();
-    $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
-
-    $kehadiran = KehadiranIII::query()
-        ->whereYear('checktime', $year)
-        ->when(!in_array('admin', $roles), function ($query) use ($user, $roles) {
+        if (!in_array('admin', $roles) && !in_array('super', $roles)) {
             if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                return $query->where('user_id', $user->id);
-            }
-            return $query->whereNull('user_id');
-        })
-        ->get()
-        ->groupBy(function ($item) {
-            return $item->user_id . '|' . \Carbon\Carbon::parse($item->checktime)->format('Y-m-d');
-        });
-
-    $tanggalLibur = Libur::whereYear('tanggal', $year)->pluck('tanggal')->map(function ($tanggal) {
-        return \Carbon\Carbon::parse($tanggal)->format('Y-m-d');
-    })->toArray();
-
-    $cuti = Cuti::where('status', 'Selesai')
-        ->whereIn('pegawai_id', $pegawaiIDs)
-        ->whereYear('tanggal_mulai', '<=', $year)
-        ->get();
-
-    $cutiByPegawai = [];
-    foreach ($cuti as $item) {
-        $start = \Carbon\Carbon::parse($item->tanggal_mulai);
-        $end = \Carbon\Carbon::parse($item->tanggal_selesai);
-        for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
-            if ($date->year == $year) {
-                $cutiByPegawai[$item->pegawai_id][] = $date->format('Y-m-d');
+                $pegawaiList->where('username', $user->username);
+            } else {
+                $pegawaiList->whereNull('id');
             }
         }
-    }
 
-    $hariKerja = collect();
-    $start = \Carbon\Carbon::create($year, 1, 1);
-    $end = \Carbon\Carbon::create($year, 12, 31);
+        $pegawaiList = $pegawaiList->select('id', 'nama', 'nip', 'username')->get();
+        $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
 
-    while ($start <= $end) {
-        $tanggal = $start->format('Y-m-d');
-        if (!$start->isWeekend() && !in_array($tanggal, $tanggalLibur)) {
-            $hariKerja->push($tanggal);
-        }
-        $start->addDay();
-    }
+        $kehadiran = KehadiranIII::query()
+            ->whereYear('checktime', $year)
+            ->when(!in_array('admin', $roles), function ($query) use ($user, $roles) {
+                if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
+                    return $query->where('user_id', $user->id);
+                }
+                return $query->whereNull('user_id');
+            })
+            ->get()
+            ->groupBy(function ($item) {
+                return $item->user_id . '|' . \Carbon\Carbon::parse($item->checktime)->format('Y-m-d');
+            });
 
-    return $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja, $cutiByPegawai) {
-        $total = ['D' => 0, 'TM' => 0, 'C' => 0, 'T' => 0, 'DL' => 0];
+        $tanggalLibur = Libur::whereYear('tanggal', $year)->pluck('tanggal')->map(function ($tanggal) {
+            return \Carbon\Carbon::parse($tanggal)->format('Y-m-d');
+        })->toArray();
 
-        foreach ($hariKerja as $tanggal) {
-            if (in_array($tanggal, $cutiByPegawai[$pegawai->id] ?? [])) {
-                $total['C']++;
-                continue;
+        $cuti = Cuti::where('status', 'Selesai')
+            ->whereIn('pegawai_id', $pegawaiIDs)
+            ->whereYear('tanggal_mulai', '<=', $year)
+            ->get();
+
+        $cutiByPegawai = [];
+        foreach ($cuti as $item) {
+            $start = \Carbon\Carbon::parse($item->tanggal_mulai);
+            $end = \Carbon\Carbon::parse($item->tanggal_selesai);
+            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                if ($date->year == $year) {
+                    $cutiByPegawai[$item->pegawai_id][] = $date->format('Y-m-d');
+                }
             }
+        }
 
-            $key = $pegawai->id . '|' . $tanggal;
+        // DL (Dinas Luar)
+        $suratTugas = SuratTugas::with(['detail', 'anggota'])
+            ->whereHas('detail', function ($q) use ($year) {
+                $q->whereYear('tanggal_mulai', '<=', $year)->orWhereYear('tanggal_selesai', '<=', $year);
+            })->get();
 
-            if ($kehadiran->has($key)) {
-                $absenHariItu = $kehadiran->get($key);
+        $dinasLuarByPegawai = [];
+        foreach ($suratTugas as $surat) {
+            if (!$surat->detail) continue;
+            $start = \Carbon\Carbon::parse($surat->detail->tanggal_mulai);
+            $end = \Carbon\Carbon::parse($surat->detail->tanggal_selesai);
+            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                $tanggal = $date->format('Y-m-d');
+                if ($date->year != $year) continue;
 
-                $datang = $absenHariItu->where('checktype', 'I')->sortBy('checktime')->first();
-                $pulang = $absenHariItu->where('checktype', 'O')->sortBy('checktime')->last();
+                $penanggungJawabID = $surat->detail->pegawai_id;
+                $dinasLuarByPegawai[$penanggungJawabID][] = $tanggal;
 
-                $hasI = $datang !== null;
-                $hasO = $pulang !== null;
+                foreach ($surat->anggota as $anggota) {
+                    $dinasLuarByPegawai[$anggota->pegawai_id][] = $tanggal;
+                }
+            }
+        }
 
-                if ($hasI && $hasO) {
-                    $jamKerjaDetik = strtotime($pulang->checktime) - strtotime($datang->checktime);
-                    $jamKerjaJam = $jamKerjaDetik / 3600;
+        $hariKerja = collect();
+        $start = \Carbon\Carbon::create($year, 1, 1);
+        $end = \Carbon\Carbon::create($year, 12, 31);
 
-                    // Ambil role pegawai dari user yang sesuai dengan username pegawai
+        while ($start <= $end) {
+            $tanggal = $start->format('Y-m-d');
+            if (!$start->isWeekend() && !in_array($tanggal, $tanggalLibur)) {
+                $hariKerja->push($tanggal);
+            }
+            $start->addDay();
+        }
+
+        return $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja, $cutiByPegawai, $dinasLuarByPegawai) {
+            $total = ['D' => 0, 'TM' => 0, 'C' => 0, 'T' => 0, 'DL' => 0];
+
+            foreach ($hariKerja as $tanggal) {
+                if (in_array($tanggal, $dinasLuarByPegawai[$pegawai->id] ?? [])) {
+                    $total['DL']++;
+                    continue;
+                }
+
+                if (in_array($tanggal, $cutiByPegawai[$pegawai->id] ?? [])) {
+                    $total['C']++;
+                    continue;
+                }
+
+                $key = $pegawai->id . '|' . $tanggal;
+
+                if ($kehadiran->has($key)) {
+                    $absenHariItu = $kehadiran->get($key);
+                    $datang = $absenHariItu->where('checktype', 'I')->sortBy('checktime')->first();
+                    $pulang = $absenHariItu->where('checktype', 'O')->sortByDesc('checktime')->first();
+
+                    $hasI = $datang !== null;
+                    $hasO = $pulang !== null;
+
+                    $izinMasukDisetujui = Terlambat::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Terlambat')
+                        ->exists() ||
+                        LupaAbsen::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Lupa Absen Masuk')
+                        ->exists();
+
+                    $izinPulangDisetujui = Terlambat::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Pulang Cepat')
+                        ->exists() ||
+                        LupaAbsen::where('pegawai_id', $pegawai->id)
+                        ->where('status', 'Disetujui')
+                        ->whereDate('tanggal', $tanggal)
+                        ->where('jenis_ijin', 'Lupa Absen Pulang')
+                        ->exists();
+
                     $userPegawai = User::where('username', $pegawai->username)->first();
                     $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
 
                     $jenis = in_array('dosen', $pegawaiRoles) ? 'dosen' : 'pegawai';
+                    $minimalJam = ($jenis === 'dosen') ? 4 : 8;
 
                     $jamKerjaCustom = Jam::where('jenis', $jenis)
                         ->whereDate('tanggal_mulai', '<=', $tanggal)
                         ->whereDate('tanggal_selesai', '>=', $tanggal)
                         ->first();
 
-                    $minimalJam = ($jenis === 'dosen') ? 4 : 8;
-
                     if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
                         $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
                         $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
-
-                        $pattern = '/(\d+)\s*jam\s*(\d+)\s*menit/';
-                        if (preg_match($pattern, $jamKerjaStr, $matches)) {
-                            $jamMinimal = (int)$matches[1];
-                            $menitMinimal = (int)$matches[2];
-                            $minimalJam = $jamMinimal + ($menitMinimal / 60);
-                        } else {
-                            Log::warning("Format jam_kerja tidak sesuai: " . $jamKerjaCustom->jam_kerja);
+                        if (preg_match('/(\d+)\s*jam\s*(\d+)\s*menit/', $jamKerjaStr, $matches)) {
+                            $minimalJam = (int)$matches[1] + ((int)$matches[2] / 60);
                         }
                     }
 
-                    if ($jamKerjaJam >= $minimalJam) {
-                        $total['D']++;
+                    if ($hasI && $hasO) {
+                        $jamKerjaJam = strtotime($pulang->checktime) - strtotime($datang->checktime);
+                        $jamKerjaJam /= 3600;
+
+                        if ($jamKerjaJam >= $minimalJam || $izinMasukDisetujui || $izinPulangDisetujui) {
+                            $total['D']++;
+                        } else {
+                            $total['T']++;
+                        }
+                    } elseif ($hasI || $hasO) {
+                        if (($hasI && $izinPulangDisetujui) || ($hasO && $izinMasukDisetujui)) {
+                            $total['D']++;
+                        } else {
+                            $total['T']++;
+                        }
                     } else {
-                        $total['T']++;
+                        $izinLupaMasuk = LupaAbsen::where('pegawai_id', $pegawai->id)
+                            ->where('status', 'Disetujui')
+                            ->whereDate('tanggal', $tanggal)
+                            ->where('jenis_ijin', 'Lupa Absen Masuk')
+                            ->exists();
+
+                        $izinLupaPulang = LupaAbsen::where('pegawai_id', $pegawai->id)
+                            ->where('status', 'Disetujui')
+                            ->whereDate('tanggal', $tanggal)
+                            ->where('jenis_ijin', 'Lupa Absen Pulang')
+                            ->exists();
+
+                        if ($izinLupaMasuk && $izinLupaPulang) {
+                            $total['D']++;
+                        } else {
+                            $total['TM']++;
+                        }
                     }
-                } elseif ($hasI || $hasO) {
-                    $total['T']++;
                 } else {
                     $total['TM']++;
                 }
-            } else {
-                $total['TM']++;
             }
-        }
 
-        return [
-            'nip' => $pegawai->nip,
-            'nama' => $pegawai->nama,
-            'total' => $total
-        ];
-    })->toArray();
-}
-
+            return [
+                'nip' => $pegawai->nip,
+                'nama' => $pegawai->nama,
+                'total' => $total
+            ];
+        })->toArray();
+    }
 
     public function export(Request $request)
     {
