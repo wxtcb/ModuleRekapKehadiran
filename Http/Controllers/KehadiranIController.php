@@ -16,6 +16,9 @@ use Modules\RekapKehadiran\Entities\KehadiranI;
 use Modules\RekapKehadiran\Exports\RekapKehadiranIExport;
 use Modules\Setting\Entities\Jam;
 use Modules\Setting\Entities\Libur;
+use Modules\SuratIjin\Entities\LupaAbsen;
+use Modules\SuratIjin\Entities\Terlambat;
+use Modules\SuratTugas\Entities\SuratTugas;
 
 class KehadiranIController extends Controller
 {
@@ -87,10 +90,27 @@ class KehadiranIController extends Controller
                 ->whereDate('tanggal_selesai', '>=', $tanggal)
                 ->exists();
 
+            // ✅ Tambahan: Cek apakah pegawai sedang Dinas Luar
+            $isDinasLuar = SuratTugas::where(function ($query) use ($pegawai, $tanggal) {
+                // Cek jika pegawai ada di detail surat tugas
+                $query->whereHas('detail', function ($q) use ($pegawai, $tanggal) {
+                    $q->where('pegawai_id', $pegawai->id)
+                    ->whereDate('tanggal_mulai', '<=', $tanggal)
+                    ->whereDate('tanggal_selesai', '>=', $tanggal);
+                })
+                // Atau pegawai ada di anggota surat tugas
+                ->orWhereHas('anggota', function ($q) use ($pegawai, $tanggal) {
+                    $q->where('pegawai_id', $pegawai->id)
+                    ->whereHas('suratTugas.detail', function ($qd) use ($tanggal) {
+                        $qd->whereDate('tanggal_mulai', '<=', $tanggal)
+                            ->whereDate('tanggal_selesai', '>=', $tanggal);
+                    });
+                });
+            })->exists();
+
             $durasi_jam = '-';
             $kurang_dari_jam_kerja = false;
 
-            // Ambil role dari masing-masing pegawai
             $userPegawai = User::where('username', $pegawai->username)->first();
             $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
 
@@ -133,18 +153,51 @@ class KehadiranIController extends Controller
                 }
             }
 
+            $izinMasukDisetujui =
+                Terlambat::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggal)
+                ->whereIn('jenis_ijin', ['Terlambat'])
+                ->exists() ||
+
+                LupaAbsen::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggal)
+                ->whereIn('jenis_ijin', ['Lupa Absen Masuk'])
+                ->exists();
+
+            $izinPulangDisetujui =
+                Terlambat::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggal)
+                ->whereIn('jenis_ijin', ['Pulang Cepat'])
+                ->exists() ||
+
+                LupaAbsen::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggal)
+                ->whereIn('jenis_ijin', ['Lupa Absen Pulang'])
+                ->exists();
+
+            // ✅ Penentuan Status dengan "Dinas Luar"
             if ($statusLibur) {
                 $status = 'Libur';
             } elseif ($isCuti) {
                 $status = 'Cuti';
-            } elseif (!$datang && !$pulang) {
+            } elseif ($isDinasLuar) {
+                $status = 'Dinas Luar';
+            } elseif (!$datang && !$pulang && !$izinMasukDisetujui && !$izinPulangDisetujui) {
                 $status = 'Alpha';
-            } elseif ($datang && !$pulang) {
-                $status = 'Hadir (Lupa presensi pulang)';
-            } elseif (!$datang && $pulang) {
+            } elseif (!$datang && !$izinMasukDisetujui) {
                 $status = 'Hadir (Lupa presensi datang)';
+            } elseif (!$pulang && !$izinPulangDisetujui) {
+                $status = 'Hadir (Lupa presensi pulang)';
             } elseif ($kurang_dari_jam_kerja) {
-                $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                if (!$izinMasukDisetujui || !$izinPulangDisetujui) {
+                    $status = 'Hadir';
+                } else {
+                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                }
             } else {
                 $status = 'Hadir';
             }

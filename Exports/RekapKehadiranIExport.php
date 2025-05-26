@@ -10,8 +10,12 @@ use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\KehadiranI;
 use Modules\Setting\Entities\Libur;
-use App\Models\JamKerja; // pastikan namespace ini benar sesuai struktur Anda
 use Modules\Setting\Entities\Jam;
+use Modules\SuratIjin\Entities\LupaAbsen;
+use Modules\SuratIjin\Entities\Terlambat;
+use Modules\SuratTugas\Entities\AnggotaSuratTugas;
+use Modules\SuratTugas\Entities\DetailSuratTugas;
+use Modules\SuratTugas\Entities\SuratTugas;
 
 class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
 {
@@ -54,7 +58,6 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
             $waktuDatang = $datang ? date('H:i:s', strtotime($datang->checktime)) : '';
             $waktuPulang = $pulang ? date('H:i:s', strtotime($pulang->checktime)) : '';
 
-            // Default status
             $status = 'Alpha';
 
             $isLibur = $tanggal->isWeekend() || in_array($tanggalStr, $liburTanggal);
@@ -64,18 +67,26 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 ->whereDate('tanggal_selesai', '>=', $tanggalStr)
                 ->exists();
 
-            // Ambil role pegawai dari relasi user-role
+            // ✅ Cek apakah sedang Dinas Luar via DetailSuratTugas (Ketua/Individu)
+            $isDinasLuarDetail = DetailSuratTugas::where('pegawai_id', $pegawai->id)
+                ->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                ->whereDate('tanggal_selesai', '>=', $tanggalStr)
+                ->exists();
+
+            // ✅ Cek apakah sedang Dinas Luar via AnggotaSuratTugas (Anggota Tim)
+            $isDinasLuarAnggota = AnggotaSuratTugas::where('pegawai_id', $pegawai->id)
+            ->whereHas('suratTugas.detail', function ($query) use ($tanggalStr) {
+                $query->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                    ->whereDate('tanggal_selesai', '>=', $tanggalStr);
+            })
+            ->exists();
+
+            $isDinasLuar = $isDinasLuarDetail || $isDinasLuarAnggota;
+
             $roles = optional($pegawai->user)->roles->pluck('name')->toArray();
+            $jenis = in_array('dosen', $roles) ? 'dosen' : 'pegawai';
+            $minimalJamKerja = $jenis === 'dosen' ? 4 : 8;
 
-            if (in_array('dosen', $roles)) {
-                $jenis = 'dosen';
-                $minimalJamKerja = 4;
-            } else {
-                $jenis = 'pegawai';
-                $minimalJamKerja = 8;
-            }
-
-            // Cek apakah ada pengaturan jam kerja khusus
             $jamKerjaCustom = Jam::where('jenis', $jenis)
                 ->whereDate('tanggal_mulai', '<=', $tanggalStr)
                 ->whereDate('tanggal_selesai', '>=', $tanggalStr)
@@ -84,16 +95,13 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
             if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
                 $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
                 $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
-
-                $pattern = '/(\d+)\s*jam\s*(\d+)\s*menit/';
-                if (preg_match($pattern, $jamKerjaStr, $matches)) {
+                if (preg_match('/(\d+)\s*jam\s*(\d+)\s*menit/', $jamKerjaStr, $matches)) {
                     $jamMinimal = (int)$matches[1];
                     $menitMinimal = (int)$matches[2];
                     $minimalJamKerja = $jamMinimal + ($menitMinimal / 60);
                 }
             }
 
-            // Cek durasi kerja
             $durasi = '-';
             $jam = 0;
             $menit = 0;
@@ -106,26 +114,56 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 $jam = floor($diffInMinutes / 60);
                 $menit = $diffInMinutes % 60;
                 $durasi = "{$jam} jam {$menit} menit";
-
                 if (($jam + ($menit / 60)) < $minimalJamKerja) {
                     $kurang_dari_jam_kerja = true;
                 }
             }
 
+            $izinMasukDisetujui =
+                Terlambat::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggalStr)
+                    ->whereIn('jenis_ijin', ['Terlambat'])
+                    ->exists() ||
 
-            // Tentukan status akhir
+                LupaAbsen::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggalStr)
+                    ->whereIn('jenis_ijin', ['Lupa Absen Masuk'])
+                    ->exists();
+
+            $izinPulangDisetujui =
+                Terlambat::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggalStr)
+                    ->whereIn('jenis_ijin', ['Pulang Cepat'])
+                    ->exists() ||
+
+                LupaAbsen::where('pegawai_id', $pegawai->id)
+                    ->where('status', 'Disetujui')
+                    ->whereDate('tanggal', $tanggalStr)
+                    ->whereIn('jenis_ijin', ['Lupa Absen Pulang'])
+                    ->exists();
+
+            // ✅ Penentuan status akhir
             if ($isLibur) {
                 $status = 'Libur';
             } elseif ($isCuti) {
                 $status = 'Cuti';
-            } elseif (!$datang && !$pulang) {
+            } elseif ($isDinasLuar) {
+                $status = 'Dinas Luar';
+            } elseif (!$datang && !$pulang && !$izinMasukDisetujui && !$izinPulangDisetujui) {
                 $status = 'Alpha';
-            } elseif ($datang && !$pulang) {
-                $status = 'Hadir (Lupa presensi pulang)';
-            } elseif (!$datang && $pulang) {
+            } elseif (!$datang && !$izinMasukDisetujui) {
                 $status = 'Hadir (Lupa presensi datang)';
+            } elseif (!$pulang && !$izinPulangDisetujui) {
+                $status = 'Hadir (Lupa presensi pulang)';
             } elseif ($kurang_dari_jam_kerja) {
-                $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                if (!$izinMasukDisetujui || !$izinPulangDisetujui) {
+                    $status = 'Hadir';
+                } else {
+                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                }
             } else {
                 $status = 'Hadir';
             }
