@@ -98,25 +98,24 @@ class KehadiranIIIController extends Controller
     private function getRekapData(Request $request, $year)
     {
         $user = auth()->user();
-        $roles = $user->getRoleNames()->toArray();
+        $roles = $user->role_aktif;
 
         $pegawaiList = Pegawai::query();
 
-        if (!in_array('admin', $roles) && !in_array('super', $roles)) {
-            if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
+        if ($roles !== 'admin' && $roles !== 'super') {
+            if ($roles === 'pegawai' || $roles === 'dosen') {
                 $pegawaiList->where('username', $user->username);
             } else {
                 $pegawaiList->whereNull('id');
             }
         }
-
         $pegawaiList = $pegawaiList->select('id', 'nama', 'nip', 'username')->get();
         $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
 
         $kehadiran = KehadiranIII::query()
             ->whereYear('checktime', $year)
-            ->when(!in_array('admin', $roles), function ($query) use ($user, $roles) {
-                if (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
+            ->when($user->role_aktif !== 'admin', function ($query) use ($user) {
+                if ($user->role_aktif === 'pegawai' || $user->role_aktif === 'dosen') {
                     return $query->where('user_id', $user->id);
                 }
                 return $query->whereNull('user_id');
@@ -301,5 +300,4 @@ class KehadiranIIIController extends Controller
 
         return Excel::download(new RekapKehadiranIIIExport($data, $year), 'rekap_kehadiran_' . $year . '.xlsx');
     }
-
 }

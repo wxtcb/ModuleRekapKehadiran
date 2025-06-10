@@ -11,14 +11,12 @@
                 <h3 class="d-flex justify-content-between align-items-center">
                     Rekapitulasi Kehadiran Pegawai I
 
-                    @if (!$isAdmin && $pegawaiId)
-                    <a
-                        href="{{ route('rekap-harian.export', [
-                'pegawai_id' => $pegawaiId,
-                'month' => \Carbon\Carbon::parse($tanggal)->month,
+                    @if(!$isAdmin && $pegawaiId && auth()->user()->role_aktif != 'mahasiswa')
+                    <a href="{{ route('rekap-harian.export', [
+        'pegawai_id' => $pegawaiId,
+        'month' => \Carbon\Carbon::parse($tanggal)->month,
                 'year' => \Carbon\Carbon::parse($tanggal)->year,
-            ]) }}"
-                        class="btn btn-success btn-sm">
+    ]) }}" class="btn btn-success btn-sm">
                         Unduh Excel Saya
                     </a>
                     @endif
