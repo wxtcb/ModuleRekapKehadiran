@@ -356,11 +356,36 @@ class KehadiranIIController extends Controller
 
         if (!in_array('admin', $roles) && !in_array('super', $roles)) {
             if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
-                $pegawaiQuery->whereNull('id');
-            } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                $pegawaiQuery->where('username', $user->username);
+                $pegawaiQuery->whereNull('id'); // tidak tampilkan apa-apa
+            } else {
+                $pegawai = Pegawai::with('pejabat.timKerja.anggota', 'timKerjaKetua.anggota')
+                    ->where('username', $user->username)
+                    ->first();
+
+                if ($pegawai) {
+                    $pegawaiIds = collect([$pegawai->id]);
+
+                    if ($pegawai->pejabat && $pegawai->pejabat->timKerja) {
+                        foreach ($pegawai->pejabat->timKerja as $tim) {
+                            foreach ($tim->anggota as $anggota) {
+                                $pegawaiIds->push($anggota->id);
+                            }
+                        }
+                    }
+
+                    foreach ($pegawai->timKerjaKetua as $tim) {
+                        foreach ($tim->anggota as $anggota) {
+                            $pegawaiIds->push($anggota->id);
+                        }
+                    }
+
+                    $pegawaiQuery->whereIn('id', $pegawaiIds->unique());
+                } else {
+                    $pegawaiQuery->where('username', $user->username);
+                }
             }
         }
+
 
         $pegawaiList = $pegawaiQuery->select('id', 'nama', 'nip', 'username')->get();
         $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
