@@ -41,8 +41,32 @@ class KehadiranIIController extends Controller
         if (!in_array('admin', $roles) && !in_array('super', $roles)) {
             if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
                 $pegawaiQuery->whereNull('id'); // tidak tampilkan apa-apa
-            } elseif (in_array('pegawai', $roles) || in_array('dosen', $roles)) {
-                $pegawaiQuery->where('username', $user->username);
+            } else {
+                $pegawai = Pegawai::with('pejabat.timKerja.anggota', 'timKerjaKetua.anggota')
+                    ->where('username', $user->username)
+                    ->first();
+
+                if ($pegawai) {
+                    $pegawaiIds = collect([$pegawai->id]);
+
+                    if ($pegawai->pejabat && $pegawai->pejabat->timKerja) {
+                        foreach ($pegawai->pejabat->timKerja as $tim) {
+                            foreach ($tim->anggota as $anggota) {
+                                $pegawaiIds->push($anggota->id);
+                            }
+                        }
+                    }
+
+                    foreach ($pegawai->timKerjaKetua as $tim) {
+                        foreach ($tim->anggota as $anggota) {
+                            $pegawaiIds->push($anggota->id);
+                        }
+                    }
+
+                    $pegawaiQuery->whereIn('id', $pegawaiIds->unique());
+                } else {
+                    $pegawaiQuery->where('username', $user->username);
+                }
             }
         }
 
@@ -99,7 +123,7 @@ class KehadiranIIController extends Controller
             $cutiTanggal = $cutiByPegawai->get($pegawai->id, []);
 
             $tanggalHariSort = collect($tanggalHari)->sort();
-            $tanggalAwal  = $tanggalHariSort->first();
+            $tanggalAwal = $tanggalHariSort->first();
             $tanggalAkhir = $tanggalHariSort->last();
 
             $dinasLuarTanggal = SuratTugas::with(['detail', 'anggota'])
@@ -113,7 +137,6 @@ class KehadiranIIController extends Controller
                 ->flatMap(function ($surat) use ($pegawai, $tanggalHari) {
                     $range = [];
 
-                    // Cek apakah pegawai adalah penanggung jawab (detail)
                     if ($surat->detail && $surat->detail->pegawai_id == $pegawai->id) {
                         $start = Carbon::parse($surat->detail->tanggal_mulai);
                         $end = Carbon::parse($surat->detail->tanggal_selesai);
@@ -122,7 +145,6 @@ class KehadiranIIController extends Controller
                         }
                     }
 
-                    // Cek apakah pegawai adalah anggota
                     foreach ($surat->anggota as $anggota) {
                         if ($anggota->pegawai_id == $pegawai->id && $surat->detail) {
                             $start = Carbon::parse($surat->detail->tanggal_mulai);
@@ -144,7 +166,6 @@ class KehadiranIIController extends Controller
                     continue;
                 }
 
-                // ⬅️ Cek DL lebih dulu dari cuti dan kehadiran lainnya
                 if (in_array($tanggal, $dinasLuarTanggal)) {
                     $presensi[] = 'DL';
                     $total['DL']++;
@@ -232,7 +253,6 @@ class KehadiranIIController extends Controller
                         $total['T']++;
                     }
                 } else {
-                    // Tambahan logika: jika tidak absen sama sekali, cek apakah ada izin lengkap
                     $izinLupaAbsenMasuk = LupaAbsen::where('pegawai_id', $pegawai->id)
                         ->where('status', 'Disetujui')
                         ->whereDate('tanggal', $tanggal)
@@ -262,7 +282,7 @@ class KehadiranIIController extends Controller
                 'total' => $total
             ];
         });
-        // dd($data);
+
         return view('rekapkehadiran::kehadiranii.index', compact('data', 'tanggalHari', 'month', 'year'));
     }
 
