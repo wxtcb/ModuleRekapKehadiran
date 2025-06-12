@@ -98,15 +98,35 @@ class KehadiranIIIController extends Controller
     private function getRekapData(Request $request, $year)
     {
         $user = auth()->user();
-        $roles = $user->role_aktif;
+        $roles = $user->getRoleNames()->toArray(); // ✅ dijamin array
 
         $pegawaiList = Pegawai::query();
 
-        if ($roles !== 'admin' && $roles !== 'super') {
-            if ($roles === 'pegawai' || $roles === 'dosen') {
-                $pegawaiList->where('username', $user->username);
+        if (!in_array('admin', $roles) && !in_array('super', $roles) && !in_array('direktur', $roles)) {
+            $pegawai = Pegawai::with('pejabat.timKerja.anggota', 'timKerjaKetua.anggota')
+                ->where('username', $user->username)
+                ->first();
+
+            if ($pegawai) {
+                $pegawaiIds = collect([$pegawai->id]);
+
+                if ($pegawai->pejabat && $pegawai->pejabat->timKerja) {
+                    foreach ($pegawai->pejabat->timKerja as $tim) {
+                        foreach ($tim->anggota as $anggota) {
+                            $pegawaiIds->push($anggota->id);
+                        }
+                    }
+                }
+
+                foreach ($pegawai->timKerjaKetua as $tim) {
+                    foreach ($tim->anggota as $anggota) {
+                        $pegawaiIds->push($anggota->id);
+                    }
+                }
+
+                $pegawaiList->whereIn('id', $pegawaiIds->unique());
             } else {
-                $pegawaiList->whereNull('id');
+                $pegawaiList->where('username', $user->username);
             }
         }
         $pegawaiList = $pegawaiList->select('id', 'nama', 'nip', 'username')->get();
