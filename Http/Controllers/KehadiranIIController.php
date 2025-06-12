@@ -38,7 +38,7 @@ class KehadiranIIController extends Controller
 
         $pegawaiQuery = Pegawai::query();
 
-        if (!in_array('admin', $roles) && !in_array('super', $roles)) {
+        if (!in_array('admin', $roles) && !in_array('super', $roles) && !in_array('direktur', $roles)) {
             if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
                 $pegawaiQuery->whereNull('id'); // tidak tampilkan apa-apa
             } else {
@@ -354,7 +354,7 @@ class KehadiranIIController extends Controller
 
         $pegawaiQuery = Pegawai::query();
 
-        if (!in_array('admin', $roles) && !in_array('super', $roles)) {
+        if (!in_array('admin', $roles) && !in_array('super', $roles) && !in_array('direktur', $roles)) {
             if (in_array('mahasiswa', $roles) && (now()->month != $month || now()->year != $year)) {
                 $pegawaiQuery->whereNull('id'); // tidak tampilkan apa-apa
             } else {
