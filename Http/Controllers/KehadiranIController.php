@@ -208,6 +208,8 @@ class KehadiranIController extends Controller
                 $status = 'Hadir';
             }
 
+            $filteredRoles = collect($pegawaiRoles)->intersect(['dosen', 'pegawai'])->values();
+
             return (object)[
                 'nama' => $pegawai->nama,
                 'nip' => $pegawai->nip,
@@ -216,6 +218,7 @@ class KehadiranIController extends Controller
                 'waktu_pulang' => $waktuPulang,
                 'status' => $status,
                 'durasi_jam' => $durasi_jam,
+                'keterangan' => $filteredRoles->isNotEmpty() ? implode(', ', $filteredRoles->toArray()) : '-',
             ];
         });
 

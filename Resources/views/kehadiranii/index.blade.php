@@ -108,6 +108,7 @@
                                 <th>No</th>
                                 <th>NIP</th>
                                 <th>Nama</th>
+                                <th>Keterangan</th>
                                 @foreach($tanggalHari as $tgl)
                                 <th>{{ \Carbon\Carbon::parse($tgl)->format('d') }}</th>
                                 @endforeach
@@ -124,6 +125,7 @@
                                 <td>{{ $index + 1 }}</td>
                                 <td>{{ $pegawai['nip'] }}</td>
                                 <td>{{ $pegawai['nama'] }}</td>
+                                <td>{{ $pegawai['keterangan'] }}</td>
                                 @foreach($pegawai['presensi'] as $presensi)
                                 <td style="background-color:
                                     {{ $presensi == 'D' ? '#00b050' :

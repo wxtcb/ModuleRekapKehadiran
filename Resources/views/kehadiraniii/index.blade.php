@@ -44,6 +44,7 @@
                             <th>No</th>
                             <th>NIP/NIK/NIPPK</th>
                             <th>Nama</th>
+                            <th>Keterangan</th>
                             <th>D</th> {{-- Hadir (dapat tunjangan) --}}
                             <th>T</th> {{-- Hadir (tanpa tunjangan) --}}
                             <th>TM</th> {{-- Tidak absen --}}
@@ -57,6 +58,7 @@
                             <td>{{ $index + 1 }}</td>
                             <td>{{ $item['nip'] }}</td>
                             <td>{{ $item['nama'] }}</td>
+                            <td>{{ $item['jenis'] }}</td>
                             <td>{{ $item['total']['D'] }}</td>
                             <td>{{ $item['total']['T'] }}</td>
                             <td>{{ $item['total']['TM'] }}</td>

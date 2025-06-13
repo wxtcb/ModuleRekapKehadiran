@@ -275,11 +275,14 @@ class KehadiranIIController extends Controller
                 }
             }
 
+            $filteredRoles = collect($pegawaiRoles)->intersect(['dosen', 'pegawai'])->values();
+
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
                 'presensi' => $presensi,
-                'total' => $total
+                'total' => $total,
+                'keterangan' => $filteredRoles->isNotEmpty() ? implode(', ', $filteredRoles->toArray()) : '-',
             ];
         });
 
