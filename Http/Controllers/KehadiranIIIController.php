@@ -204,6 +204,12 @@ class KehadiranIIIController extends Controller
         return $pegawaiList->map(function ($pegawai) use ($kehadiran, $hariKerja, $cutiByPegawai, $dinasLuarByPegawai) {
             $total = ['D' => 0, 'TM' => 0, 'C' => 0, 'T' => 0, 'DL' => 0];
 
+            $userPegawai = User::where('username', $pegawai->username)->first();
+            $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
+
+            $filteredRoles = collect($pegawaiRoles)->intersect(['dosen', 'pegawai'])->values();
+            $jenis = $filteredRoles->first() ?? 'pegawai';
+
             foreach ($hariKerja as $tanggal) {
                 if (in_array($tanggal, $dinasLuarByPegawai[$pegawai->id] ?? [])) {
                     $total['DL']++;
@@ -308,6 +314,7 @@ class KehadiranIIIController extends Controller
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
+                'jenis' => $jenis,
                 'total' => $total
             ];
         })->toArray();

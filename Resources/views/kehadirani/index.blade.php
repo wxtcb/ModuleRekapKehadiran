@@ -52,6 +52,7 @@
                                 <th>#</th>
                                 <th>NIP</th>
                                 <th>Nama</th>
+                                <th>Keterangan</th>
                                 <th>Jam Masuk</th>
                                 <th>Jam Pulang</th>
                                 <th>Status</th>
@@ -69,6 +70,7 @@
                                     <td>{{ $index + 1 }}</td>
                                     <td>{{ $data->nip }}</td>
                                     <td>{{ $data->nama }}</td>
+                                    <td>{{ $data->keterangan }}</td>
                                     <td>{{ $data->waktu_datang }}</td>
                                     <td>{{ $data->waktu_pulang }}</td>
                                     <td>{{ $data->status }}</td>
