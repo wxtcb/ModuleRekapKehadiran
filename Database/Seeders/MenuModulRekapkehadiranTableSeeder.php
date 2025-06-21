@@ -58,5 +58,25 @@ class MenuModulRekapkehadiranTableSeeder extends Seeder
             'parent_id' => $parent->id,
             'active' => serialize(['rekapkehadiran/kehadiraniii']),
         ]);
+        Menu::create([
+            'modul' => 'RekapKehadiran',
+            'label' => 'Hari Libur',
+            'url' => 'rekapkehadiran/libur',
+            'can' => serialize(['admin']),
+            'icon' => 'far fa-circle',
+            'urut' => 1,
+            'parent_id' => $parent->id,
+            'active' => serialize(['rekapkehadiran/libur', 'rekapkehadiran/libur*']),
+        ]);
+        Menu::create([
+            'modul' => 'RekapKehadiran',
+            'label' => 'Jam Kerja',
+            'url' => 'rekapkehadiran/jam',
+            'can' => serialize(['admin']),
+            'icon' => 'far fa-circle',
+            'urut' => 1,
+            'parent_id' => $parent->id,
+            'active' => serialize(['rekapkehadiran/jam', 'rekapkehadiran/jam*']),
+        ]);
     }
 }

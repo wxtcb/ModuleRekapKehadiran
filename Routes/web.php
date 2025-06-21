@@ -17,7 +17,6 @@ Route::prefix('rekapkehadiran')->group(function() {
     Route::prefix('kehadirani')->group(function() {
         Route::get('/', 'KehadiranIController@index')->name('kehadirani.index');  
         Route::get('/rekap-kehadiran/export', 'KehadiranIController@export')->name('rekap-harian.export');
-      
     });
 
     Route::prefix('kehadiranii')->group(function() {
@@ -28,5 +27,15 @@ Route::prefix('rekapkehadiran')->group(function() {
     Route::prefix('kehadiraniii')->group(function() {
         Route::get('/', 'KehadiranIIIController@index')->name('kehadiraniii.index');        
         Route::get('/rekap-kehadiran/export', 'KehadiranIIIController@export')->name('rekap-tahunan.export');
+    });
+
+        Route::prefix('libur')->group(function() {
+        Route::get('/', 'LiburController@index')->name('libur.index');
+        Route::post('/store', 'LiburController@store')->name('libur.store');
+    });
+
+    Route::prefix('jam')->group(function() {
+        Route::get('/', 'JamController@index')->name('jam.index'); 
+        Route::post('/store', 'JamController@store')->name('jam.store'); 
     });
 });
