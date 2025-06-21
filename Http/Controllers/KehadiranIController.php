@@ -208,7 +208,12 @@ class KehadiranIController extends Controller
                 $status = 'Hadir';
             }
 
-            $filteredRoles = collect($pegawaiRoles)->intersect(['dosen', 'pegawai'])->values();
+            $filteredRoles = collect($pegawaiRoles)
+                ->intersect(['dosen', 'pegawai'])
+                ->map(function ($role) {
+                    return $role === 'pegawai' ? 'tendik' : $role;
+                })
+                ->values();
 
             return (object)[
                 'nama' => $pegawai->nama,

@@ -11,7 +11,7 @@
                     <h3 class="d-flex justify-content-between align-items-center">
                         Rekapitulasi Kehadiran Pegawai I
 
-                        @if (!$isAdmin && $pegawaiId && auth()->user()->role_aktif != 'mahasiswa')
+                        @if (!$isAdmin && $pegawaiId && auth()->user()->role_aktif != 'mahasiswa' && auth()->user()->role_aktif != 'kajur' )
                             <a href="{{ route('rekap-harian.export', [
                                 'pegawai_id' => $pegawaiId,
                                 'month' => \Carbon\Carbon::parse($tanggal)->month,
