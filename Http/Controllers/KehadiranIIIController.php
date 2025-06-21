@@ -208,7 +208,7 @@ class KehadiranIIIController extends Controller
             $pegawaiRoles = $userPegawai?->getRoleNames()?->toArray() ?? [];
 
             $filteredRoles = collect($pegawaiRoles)->intersect(['dosen', 'pegawai'])->values();
-            $jenis = $filteredRoles->first() ?? 'pegawai';
+            $jenis = $filteredRoles->first() ?? '-';
 
             foreach ($hariKerja as $tanggal) {
                 if (in_array($tanggal, $dinasLuarByPegawai[$pegawai->id] ?? [])) {
