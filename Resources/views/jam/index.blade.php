@@ -46,8 +46,15 @@
                                         <label>Jenis Karyawan</label>
                                         <select name="jenis" class="form-control" id="jenis-karyawan" required>
                                             <option value="">-- Pilih --</option>
-                                            <option value="pegawai">Pegawai</option>
+                                            <option value="pegawai">Tendik/PNS</option>
                                             <option value="dosen">Dosen</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label>Skema Absen</label>
+                                        <select name="skema_absen" class="form-control" id="skema-absen" required>
+                                            <option value="2">Absen 2 Kali (Masuk & Pulang)</option>
+                                            <option value="4">Absen 4 Kali (Masuk, Istirahat Keluar, Istirahat Masuk, Pulang)</option>
                                         </select>
                                     </div>
                                     <div class="mb-3">
@@ -70,6 +77,14 @@
                                         <label>Jam Kerja</label>
                                         <input type="text" name="jam_kerja" placeholder="Contoh: 3 jam 0 menit" class="form-control">
                                     </div>
+                                    <div class="mb-3 istirahat-fields" style="display: none;">
+                                        <label>Jam Istirahat Keluar</label>
+                                        <input type="time" name="jam_istirahat_keluar" class="form-control">
+                                    </div>
+                                    <div class="mb-3 istirahat-fields" style="display: none;">
+                                        <label>Jam Istirahat Masuk</label>
+                                        <input type="time" name="jam_istirahat_masuk" class="form-control">
+                                    </div>
                                 </div>
                                 <div class="modal-footer">
                                     <button type="submit" class="btn btn-primary">Simpan</button>
@@ -86,8 +101,11 @@
                             <th>Tanggal Mulai</th>
                             <th>Tanggal Selesai</th>
                             <th>Jenis Karyawan</th>
+                            <th>Skema Absen</th>
                             <th>Jam Masuk</th>
                             <th>Jam Pulang</th>
+                            <th>Jam Istirahat Keluar</th>
+                            <th>Jam Istirahat Masuk</th>
                             <th>Jam Kerja</th>
                         </tr>
                     </thead>
@@ -98,13 +116,16 @@
                             <td>{{ $item->tanggal_mulai }}</td>
                             <td>{{ $item->tanggal_selesai }}</td>
                             <td>{{ ucfirst($item->jenis) }}</td>
+                            <td>{{ $item->skema_absen == 4 ? '4 Kali' : '2 Kali' }}</td>
                             <td>{{ $item->jam_masuk ?? '-' }}</td>
                             <td>{{ $item->jam_pulang ?? '-' }}</td>
+                            <td>{{ $item->jam_istirahat_keluar ?? '-' }}</td>
+                            <td>{{ $item->jam_istirahat_masuk ?? '-' }}</td>
                             <td>{{ $item->jam_kerja }}</td>
                         </tr>
                         @empty
                         <tr>
-                            <td colspan="7" class="text-center">Belum ada data jam kerja.</td>
+                            <td colspan="10" class="text-center">Belum ada data jam kerja.</td>
                         </tr>
                         @endforelse
                     </tbody>
@@ -119,14 +140,33 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const jenisSelect = document.getElementById('jenis-karyawan');
-        jenisSelect.addEventListener('change', function() {
+        const skemaAbsenSelect = document.getElementById('skema-absen');
+
+        // Function to toggle fields based on employee type
+        function toggleJenisFields() {
             document.querySelectorAll('.pegawai-only, .dosen-only').forEach(el => el.style.display = 'none');
-            if (this.value === 'pegawai') {
+            if (jenisSelect.value === 'pegawai') {
                 document.querySelectorAll('.pegawai-only').forEach(el => el.style.display = 'block');
-            } else if (this.value === 'dosen') {
+            } else if (jenisSelect.value === 'dosen') {
                 document.querySelectorAll('.dosen-only').forEach(el => el.style.display = 'block');
             }
-        });
+            toggleIstirahatFields();
+        }
+
+        // Function to toggle istirahat fields based on skema absen
+        function toggleIstirahatFields() {
+            const istirahatFields = document.querySelectorAll('.istirahat-fields');
+            istirahatFields.forEach(field => {
+                field.style.display = skemaAbsenSelect.value === '4' ? 'block' : 'none';
+            });
+        }
+
+        // Event listeners
+        jenisSelect.addEventListener('change', toggleJenisFields);
+        skemaAbsenSelect.addEventListener('change', toggleIstirahatFields);
+
+        // Initialize fields on page load
+        toggleJenisFields();
     });
 </script>
 @stop

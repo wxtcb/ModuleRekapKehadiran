@@ -2,7 +2,6 @@
 
 namespace  Modules\RekapKehadiran\Exports;
 
-
 use App\Models\Pegawai;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\FromCollection;
@@ -32,10 +31,18 @@ class RekapKehadiranIIExport implements FromArray, WithHeadings, WithTitle
                 $index + 1,
                 $pegawai['nip'],
                 $pegawai['nama'],
+                $pegawai['keterangan'] ?? '', // Menambahkan keterangan
             ];
 
-            foreach ($pegawai['presensi'] as $presensi) {
-                $row[] = $presensi;
+            // Menambahkan jam masuk dan jam pulang untuk setiap tanggal
+            foreach ($pegawai['presensi'] as $idx => $presensi) {
+                $jamMasuk = $pegawai['jam_masuk'][$idx] ?? '-';
+                $jamPulang = $pegawai['jam_pulang'][$idx] ?? '-';
+                
+                // Gabungkan jam masuk dan jam pulang dalam satu cell dengan line break
+                $jamKehadiran = $jamMasuk . "\n" . $jamPulang;
+                
+                $row[] = $jamKehadiran;
             }
 
             $row[] = $pegawai['total']['D'];
@@ -52,7 +59,7 @@ class RekapKehadiranIIExport implements FromArray, WithHeadings, WithTitle
 
     public function headings(): array
     {
-        $headings = ['No', 'NIP', 'Nama'];
+        $headings = ['No', 'NIP', 'Nama', 'Keterangan'];
 
         foreach ($this->tanggalHari as $tgl) {
             $headings[] = \Carbon\Carbon::parse($tgl)->format('d');

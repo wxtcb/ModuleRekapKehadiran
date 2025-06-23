@@ -3,7 +3,9 @@
 namespace Modules\RekapKehadiran\Http\Controllers;
 
 use App\Models\Core\User;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
+use DateTime;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -120,6 +122,9 @@ class KehadiranIIController extends Controller
         $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex, $cutiByPegawai) {
             $presensi = [];
             $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
+            $jamMasukArray = [];
+            $jamPulangArray = [];
+
             $cutiTanggal = $cutiByPegawai->get($pegawai->id, []);
 
             $tanggalHariSort = collect($tanggalHari)->sort();
@@ -163,18 +168,27 @@ class KehadiranIIController extends Controller
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
                     $presensi[] = 'L';
+                    $jamMasukArray[] = null;
+                    $jamPulangArray[] = null;
+
                     continue;
                 }
 
                 if (in_array($tanggal, $dinasLuarTanggal)) {
                     $presensi[] = 'DL';
                     $total['DL']++;
+                    $jamMasukArray[] = null;
+                    $jamPulangArray[] = null;
+
                     continue;
                 }
 
                 if (in_array($tanggal, $cutiTanggal)) {
                     $presensi[] = 'C';
                     $total['C']++;
+                    $jamMasukArray[] = null;
+                    $jamPulangArray[] = null;
+
                     continue;
                 }
 
@@ -183,6 +197,9 @@ class KehadiranIIController extends Controller
 
                 $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
                 $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+                $jamMasukArray[] = $checkIn ? \Carbon\Carbon::parse($checkIn->checktime)->format('H:i') : null;
+                $jamPulangArray[] = $checkOut ? \Carbon\Carbon::parse($checkOut->checktime)->format('H:i') : null;
+
                 $hasI = !is_null($checkIn);
                 $hasO = !is_null($checkOut);
 
@@ -281,6 +298,8 @@ class KehadiranIIController extends Controller
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
                 'presensi' => $presensi,
+                'jam_masuk' => $jamMasukArray,
+                'jam_pulang' => $jamPulangArray,
                 'total' => $total,
                 'keterangan' => $filteredRoles->isNotEmpty() ? implode(', ', $filteredRoles->toArray()) : '-',
             ];
@@ -389,7 +408,6 @@ class KehadiranIIController extends Controller
             }
         }
 
-
         $pegawaiList = $pegawaiQuery->select('id', 'nama', 'nip', 'username')->get();
         $pegawaiIDs = $pegawaiList->pluck('id')->toArray();
 
@@ -444,6 +462,8 @@ class KehadiranIIController extends Controller
         $data = $pegawaiList->map(function ($pegawai) use ($kehadiran, $tanggalHari, $liburIndex, $cutiByPegawai) {
             $presensi = [];
             $total = ['D' => 0, 'T' => 0, 'TM' => 0, 'C' => 0, 'DL' => 0];
+            $jamMasukArray = []; // Menambahkan array untuk jam masuk
+            $jamPulangArray = []; // Menambahkan array untuk jam pulang
             $cutiTanggal = $cutiByPegawai->get($pegawai->id, []);
 
             $tanggalHariSort = collect($tanggalHari)->sort();
@@ -489,6 +509,8 @@ class KehadiranIIController extends Controller
             foreach ($tanggalHari as $idx => $tanggal) {
                 if ($liburIndex[$idx]) {
                     $presensi[] = 'L';
+                    $jamMasukArray[] = null; // Tambahkan null untuk hari libur
+                    $jamPulangArray[] = null; // Tambahkan null untuk hari libur
                     continue;
                 }
 
@@ -496,12 +518,16 @@ class KehadiranIIController extends Controller
                 if (in_array($tanggal, $dinasLuarTanggal)) {
                     $presensi[] = 'DL';
                     $total['DL']++;
+                    $jamMasukArray[] = null; // Tambahkan null untuk dinas luar
+                    $jamPulangArray[] = null; // Tambahkan null untuk dinas luar
                     continue;
                 }
 
                 if (in_array($tanggal, $cutiTanggal)) {
                     $presensi[] = 'C';
                     $total['C']++;
+                    $jamMasukArray[] = null; // Tambahkan null untuk cuti
+                    $jamPulangArray[] = null; // Tambahkan null untuk cuti
                     continue;
                 }
 
@@ -510,6 +536,11 @@ class KehadiranIIController extends Controller
 
                 $checkIn = $records->where('checktype', 'I')->sortBy('checktime')->first();
                 $checkOut = $records->where('checktype', 'O')->sortByDesc('checktime')->first();
+
+                // Tambahkan jam masuk dan jam pulang ke array
+                $jamMasukArray[] = $checkIn ? \Carbon\Carbon::parse($checkIn->checktime)->format('H:i') : null;
+                $jamPulangArray[] = $checkOut ? \Carbon\Carbon::parse($checkOut->checktime)->format('H:i') : null;
+
                 $hasI = !is_null($checkIn);
                 $hasO = !is_null($checkOut);
 
@@ -603,11 +634,17 @@ class KehadiranIIController extends Controller
                 }
             }
 
+            // Tambahkan keterangan seperti di function index
+            $filteredRoles = collect($pegawaiRoles)->intersect(['dosen', 'pegawai'])->values();
+
             return [
                 'nip' => $pegawai->nip,
                 'nama' => $pegawai->nama,
                 'presensi' => $presensi,
-                'total' => $total
+                'jam_masuk' => $jamMasukArray, // Tambahkan jam masuk
+                'jam_pulang' => $jamPulangArray, // Tambahkan jam pulang
+                'total' => $total,
+                'keterangan' => $filteredRoles->isNotEmpty() ? implode(', ', $filteredRoles->toArray()) : '-', // Tambahkan keterangan
             ];
         });
 
@@ -621,9 +658,32 @@ class KehadiranIIController extends Controller
     {
         $month = $request->input('month', now()->month);
         $year = $request->input('year', now()->year);
+        $format = $request->input('format', 'excel');
 
         $rekap = $this->getRekapData($month, $year);
 
+        if ($format === 'pdf') {
+            $monthName = \DateTime::createFromFormat('!m', $month)->format('F');
+            $title = "Rekap Kehadiran $monthName $year";
+
+            $pdf = \PDF::loadView('rekapkehadiran::pdf.rekapbulanan', [
+                'data' => $rekap['data'],
+                'tanggalHari' => $rekap['tanggalHari'],
+                'month' => $month,
+                'year' => $year,
+                'title' => $title
+            ])
+                ->setPaper('a4', 'landscape')
+                ->setOption('dpi', 96)
+                ->setOption('margin-top', 5)
+                ->setOption('margin-right', 5)
+                ->setOption('margin-bottom', 5)
+                ->setOption('margin-left', 5);
+
+            return $pdf->download('rekap_kehadiran_' . $month . '_' . $year . '.pdf');
+        }
+
+        // Default to Excel export
         return Excel::download(
             new RekapKehadiranIIExport($rekap['data'], $rekap['tanggalHari'], $month, $year),
             'rekap_kehadiran_' . $month . '_' . $year . '.xlsx'
