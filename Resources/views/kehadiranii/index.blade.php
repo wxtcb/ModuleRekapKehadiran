@@ -20,6 +20,37 @@
         .table th {
             white-space: nowrap;
         }
+
+        .dropdown-export {
+            display: inline-block;
+            position: relative;
+        }
+
+        .dropdown-export-content {
+            display: none;
+            position: absolute;
+            right: 0;
+            background-color: #f9f9f9;
+            min-width: 160px;
+            box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
+            z-index: 1;
+        }
+
+        .dropdown-export-content a {
+            color: black;
+            padding: 8px 12px;
+            text-decoration: none;
+            display: block;
+            font-size: 14px;
+        }
+
+        .dropdown-export-content a:hover {
+            background-color: #f1f1f1;
+        }
+
+        .dropdown-export:hover .dropdown-export-content {
+            display: block;
+        }
     </style>
 
     <div class="col-12">
@@ -28,12 +59,19 @@
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h3 class="mb-0">Rekapitulasi Kehadiran Pegawai II</h3>
 
-                    <a
-                        id="download-excel-btn"
-                        class="btn btn-info btn-sm"
-                        href="{{ route('rekap-bulanan.export', ['month' => $month, 'year' => $year]) }}">
-                        <i class="fas fa-file-excel"></i> Unduh Excel
-                    </a>
+                    <div class="dropdown-export">
+                        <button class="btn btn-info btn-sm dropdown-toggle" type="button">
+                            <i class="fas fa-download"></i> Unduh Laporan
+                        </button>
+                        <div class="dropdown-export-content">
+                            <a href="#" id="download-excel-btn">
+                                <i class="fas fa-file-excel text-success"></i> Excel
+                            </a>
+                            <a href="#" id="download-pdf-btn">
+                                <i class="fas fa-file-pdf text-danger"></i> PDF
+                            </a>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="lead"></div>
@@ -125,19 +163,27 @@
                                 <td>{{ $index + 1 }}</td>
                                 <td>{{ $pegawai['nip'] }}</td>
                                 <td>{{ $pegawai['nama'] }}</td>
-                                <td>{{ $pegawai['keterangan'] }}</td>
-                                @foreach($pegawai['presensi'] as $presensi)
-                                <td style="background-color:
-                                    {{ $presensi == 'D' ? '#00b050' :
-                                    ($presensi == 'TM' ? '#ff0000' :
-                                    ($presensi == 'L' ? '#808080' :
-                                    ($presensi == 'C' ? '#0000ff' :
-                                    ($presensi == 'T' ? '#ffa500' :
-                                    ($presensi == 'DL' ? '#800080' : 'transparent'))))) }};
-                                    color: white; text-align: center;">
-                                    {{ $presensi }}
+                                <td>{{ $pegawai['keterangan'] }}
+
+                                @foreach($pegawai['presensi'] as $idx => $status)
+                                @php
+                                $jamMasuk = $pegawai['jam_masuk'][$idx] ?? '-';
+                                $jamPulang = $pegawai['jam_pulang'][$idx] ?? '-';
+                                $warna = match($status) {
+                                'D' => '#00b050',
+                                'TM' => '#ff0000',
+                                'L' => '#808080',
+                                'C' => '#0000ff',
+                                'T' => '#ffa500',
+                                'DL' => '#800080',
+                                default => 'transparent'
+                                };
+                                @endphp
+                                <td style="background-color: {{ $warna }}; color: white; font-size: 11px; text-align: center;">
+                                    {{ $jamMasuk }}<br>{{ $jamPulang }}
                                 </td>
                                 @endforeach
+
                                 <td>{{ $pegawai['total']['D'] }}</td>
                                 <td>{{ $pegawai['total']['TM'] }}</td>
                                 <td>{{ $pegawai['total']['C'] }}</td>
@@ -160,21 +206,29 @@
     document.addEventListener('DOMContentLoaded', function() {
         const monthSelect = document.getElementById('month');
         const yearSelect = document.getElementById('year');
-        const downloadBtn = document.getElementById('download-excel-btn');
+        const excelBtn = document.getElementById('download-excel-btn');
+        const pdfBtn = document.getElementById('download-pdf-btn');
 
-        function updateDownloadLink() {
+        function updateDownloadLinks() {
             const month = monthSelect.value;
             const year = yearSelect.value;
             const baseUrl = "{{ route('rekap-bulanan.export') }}";
-            downloadBtn.href = `${baseUrl}?month=${month}&year=${year}`;
+
+            excelBtn.href = `${baseUrl}?month=${month}&year=${year}&format=excel`;
+            pdfBtn.href = `${baseUrl}?month=${month}&year=${year}&format=pdf`;
         }
 
-        // Update on change
-        monthSelect.addEventListener('change', updateDownloadLink);
-        yearSelect.addEventListener('change', updateDownloadLink);
+        // Tambahkan event listener untuk mencegah default behavior
+        [excelBtn, pdfBtn].forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                window.location.href = this.href;
+            });
+        });
 
-        // Set initial URL on page load
-        updateDownloadLink();
+        monthSelect.addEventListener('change', updateDownloadLinks);
+        yearSelect.addEventListener('change', updateDownloadLinks);
+        updateDownloadLinks();
     });
 </script>
 

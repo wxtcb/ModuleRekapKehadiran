@@ -40,8 +40,11 @@ class JamController extends Controller
             'tanggal_mulai' => 'required',
             'tanggal_selesai' => 'required',
             'jenis' => 'required|in:pegawai,dosen',
+            'skema_absen' => 'required|in:2,4',
             'jam_masuk' => 'nullable|required_if:jenis,pegawai|date_format:H:i',
             'jam_pulang' => 'nullable|required_if:jenis,pegawai|date_format:H:i',
+            'jam_istirahat_keluar' => 'nullable|required_if:skema_absen,4|date_format:H:i',
+            'jam_istirahat_masuk' => 'nullable|required_if:skema_absen,4|date_format:H:i',
             'jam_kerja' => 'nullable|required_if:jenis,dosen|string'
         ]);
 
@@ -50,13 +53,25 @@ class JamController extends Controller
         $jamKerja->tanggal_mulai = $request->tanggal_mulai;
         $jamKerja->tanggal_selesai = $request->tanggal_selesai;
         $jamKerja->jenis = $request->jenis;
+        $jamKerja->skema_absen = $request->skema_absen;
         $jamKerja->jam_masuk = $request->jam_masuk;
         $jamKerja->jam_pulang = $request->jam_pulang;
+        $jamKerja->jam_istirahat_keluar = $request->jam_istirahat_keluar;
+        $jamKerja->jam_istirahat_masuk = $request->jam_istirahat_masuk;
 
         if ($request->jenis === 'pegawai') {
             $start = strtotime($request->jam_masuk);
             $end = strtotime($request->jam_pulang);
             $diff = $end - $start;
+
+            // Subtract break time if skema absen is 4
+            if ($request->skema_absen == 4 && $request->jam_istirahat_keluar && $request->jam_istirahat_masuk) {
+                $breakStart = strtotime($request->jam_istirahat_keluar);
+                $breakEnd = strtotime($request->jam_istirahat_masuk);
+                $breakDiff = $breakEnd - $breakStart;
+                $diff -= $breakDiff;
+            }
+
             $jam = floor($diff / 3600);
             $menit = floor(($diff % 3600) / 60);
             $jamKerja->jam_kerja = "$jam jam $menit menit";

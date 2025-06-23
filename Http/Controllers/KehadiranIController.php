@@ -3,6 +3,7 @@
 namespace Modules\RekapKehadiran\Http\Controllers;
 
 use App\Models\Core\User;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
@@ -294,11 +295,189 @@ class KehadiranIController extends Controller
 
     public function export(Request $request)
     {
+        $request->validate([
+            'pegawai_id' => 'required|integer',
+            'month' => 'required|integer|between:1,12',
+            'year' => 'required|integer',
+            'format' => 'sometimes|in:excel,pdf'
+        ]);
+
         $pegawaiId = $request->input('pegawai_id');
         $month = $request->input('month');
         $year = $request->input('year');
+        $format = $request->input('format', 'excel');
 
-        return Excel::download(new RekapKehadiranIExport($pegawaiId, $month, $year), 'rekap-kehadiran.xlsx');
+        $pegawai = Pegawai::findOrFail($pegawaiId);
+        $monthName = Carbon::create($year, $month)->translatedFormat('F Y');
+        $fileName = "Rekap_Kehadiran_{$pegawai->nama}_{$monthName}";
+
+        if ($format === 'pdf') {
+            $data = $this->prepareExportData($pegawaiId, $month, $year);
+
+            $pdf = Pdf::loadView('rekapkehadiran::pdf.rekapharian', [
+                'data' => $data,
+                'pegawai' => $pegawai,
+                'monthName' => $monthName,
+                'headings' => ['Nama', 'NIP', 'Tanggal', 'Jam Masuk', 'Jam Pulang', 'Status', 'Durasi Kerja']
+            ])->setPaper('a4', 'landscape');
+
+            return $pdf->download("{$fileName}.pdf");
+        }
+
+        // Default to Excel export
+        return Excel::download(
+            new RekapKehadiranIExport($pegawaiId, $month, $year),
+            "{$fileName}.xlsx"
+        );
+    }
+
+    protected function prepareExportData($pegawaiId, $month, $year)
+    {
+        $pegawai = Pegawai::findOrFail($pegawaiId);
+        $totalHari = Carbon::create($year, $month)->daysInMonth;
+
+        $liburTanggal = Libur::whereMonth('tanggal', $month)
+            ->whereYear('tanggal', $year)
+            ->pluck('tanggal')
+            ->map(fn($tgl) => Carbon::parse($tgl)->format('Y-m-d'))
+            ->toArray();
+
+        $data = [];
+
+        for ($i = 1; $i <= $totalHari; $i++) {
+            $tanggal = Carbon::create($year, $month, $i);
+            $tanggalStr = $tanggal->format('Y-m-d');
+
+            $checkins = KehadiranI::on('second_db')
+                ->whereDate('checktime', $tanggalStr)
+                ->where('user_id', $pegawai->id)
+                ->get();
+
+            $datang = $checkins->where('checktype', 'I')->sortBy('checktime')->first();
+            $pulang = $checkins->where('checktype', 'O')->sortByDesc('checktime')->first();
+
+            $waktuDatang = $datang ? date('H:i:s', strtotime($datang->checktime)) : '';
+            $waktuPulang = $pulang ? date('H:i:s', strtotime($pulang->checktime)) : '';
+
+            $status = 'Alpha';
+
+            $isLibur = $tanggal->isWeekend() || in_array($tanggalStr, $liburTanggal);
+            $isCuti = Cuti::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Selesai')
+                ->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                ->whereDate('tanggal_selesai', '>=', $tanggalStr)
+                ->exists();
+
+            $isDinasLuar = SuratTugas::where(function ($query) use ($pegawai, $tanggalStr) {
+                $query->whereHas('detail', function ($q) use ($pegawai, $tanggalStr) {
+                    $q->where('pegawai_id', $pegawai->id)
+                        ->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                        ->whereDate('tanggal_selesai', '>=', $tanggalStr);
+                })->orWhereHas('anggota', function ($q) use ($pegawai, $tanggalStr) {
+                    $q->where('pegawai_id', $pegawai->id)
+                        ->whereHas('suratTugas.detail', function ($qd) use ($tanggalStr) {
+                            $qd->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                                ->whereDate('tanggal_selesai', '>=', $tanggalStr);
+                        });
+                });
+            })->exists();
+
+            $roles = optional($pegawai->user)->roles->pluck('name')->toArray();
+            $jenis = in_array('dosen', $roles) ? 'dosen' : 'pegawai';
+            $minimalJamKerja = $jenis === 'dosen' ? 4 : 8;
+
+            $jamKerjaCustom = Jam::where('jenis', $jenis)
+                ->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                ->whereDate('tanggal_selesai', '>=', $tanggalStr)
+                ->first();
+
+            if ($jamKerjaCustom && !empty($jamKerjaCustom->jam_kerja)) {
+                $jamKerjaStr = strtolower(trim($jamKerjaCustom->jam_kerja));
+                $jamKerjaStr = preg_replace('/\s+/', ' ', $jamKerjaStr);
+                if (preg_match('/(\d+)\s*jam\s*(\d+)\s*menit/', $jamKerjaStr, $matches)) {
+                    $jamMinimal = (int)$matches[1];
+                    $menitMinimal = (int)$matches[2];
+                    $minimalJamKerja = $jamMinimal + ($menitMinimal / 60);
+                }
+            }
+
+            $durasi = '-';
+            $jam = 0;
+            $menit = 0;
+            $kurang_dari_jam_kerja = false;
+
+            if ($datang && $pulang) {
+                $start = Carbon::parse($datang->checktime);
+                $end = Carbon::parse($pulang->checktime);
+                $diffInMinutes = $end->diffInMinutes($start);
+                $jam = floor($diffInMinutes / 60);
+                $menit = $diffInMinutes % 60;
+                $durasi = "{$jam} jam {$menit} menit";
+                if (($jam + ($menit / 60)) < $minimalJamKerja) {
+                    $kurang_dari_jam_kerja = true;
+                }
+            }
+
+            $izinMasukDisetujui =
+                Terlambat::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggalStr)
+                ->whereIn('jenis_ijin', ['Terlambat'])
+                ->exists() ||
+
+                LupaAbsen::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggalStr)
+                ->whereIn('jenis_ijin', ['Lupa Absen Masuk'])
+                ->exists();
+
+            $izinPulangDisetujui =
+                Terlambat::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggalStr)
+                ->whereIn('jenis_ijin', ['Pulang Cepat'])
+                ->exists() ||
+
+                LupaAbsen::where('pegawai_id', $pegawai->id)
+                ->where('status', 'Disetujui')
+                ->whereDate('tanggal', $tanggalStr)
+                ->whereIn('jenis_ijin', ['Lupa Absen Pulang'])
+                ->exists();
+
+            if ($isLibur) {
+                $status = 'Libur';
+            } elseif ($isCuti) {
+                $status = 'Cuti';
+            } elseif ($isDinasLuar) {
+                $status = 'Dinas Luar';
+            } elseif (!$datang && !$pulang && !$izinMasukDisetujui && !$izinPulangDisetujui) {
+                $status = 'Alpha';
+            } elseif (!$datang && !$izinMasukDisetujui) {
+                $status = 'Hadir (Lupa presensi datang)';
+            } elseif (!$pulang && !$izinPulangDisetujui) {
+                $status = 'Hadir (Lupa presensi pulang)';
+            } elseif ($kurang_dari_jam_kerja) {
+                if (!$izinMasukDisetujui || !$izinPulangDisetujui) {
+                    $status = 'Hadir';
+                } else {
+                    $status = 'Hadir (Tidak Mendapat Tunjangan)';
+                }
+            } else {
+                $status = 'Hadir';
+            }
+
+            $data[] = [
+                'nama' => $i === 1 ? $pegawai->nama : '',
+                'nip' => $i === 1 ? $pegawai->nip : '',
+                'tanggal' => $tanggal->format('d-m-Y'),
+                'waktu_datang' => $waktuDatang,
+                'waktu_pulang' => $waktuPulang,
+                'status' => $status,
+                'durasi' => $durasi,
+            ];
+        }
+
+        return $data;
     }
 
     public function getBawahanJikaPejabat()

@@ -3,9 +3,8 @@
 namespace Modules\RekapKehadiran\Exports;
 
 use Carbon\Carbon;
-use Maatwebsite\Excel\Concerns\FromArray;
-use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithTitle;
+use Illuminate\Contracts\View\View;
+use Maatwebsite\Excel\Concerns\FromView;
 use Modules\Cuti\Entities\Cuti;
 use Modules\Pengaturan\Entities\Pegawai;
 use Modules\RekapKehadiran\Entities\Jam;
@@ -15,9 +14,8 @@ use Modules\SuratIjin\Entities\LupaAbsen;
 use Modules\SuratIjin\Entities\Terlambat;
 use Modules\SuratTugas\Entities\AnggotaSuratTugas;
 use Modules\SuratTugas\Entities\DetailSuratTugas;
-use Modules\SuratTugas\Entities\SuratTugas;
 
-class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
+class RekapKehadiranIPdfExport implements FromView
 {
     protected $pegawaiId;
     protected $month;
@@ -30,7 +28,7 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
         $this->year = $year;
     }
 
-    public function array(): array
+    public function view(): View
     {
         $pegawai = Pegawai::findOrFail($this->pegawaiId);
         $totalHari = Carbon::create($this->year, $this->month)->daysInMonth;
@@ -67,19 +65,17 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                 ->whereDate('tanggal_selesai', '>=', $tanggalStr)
                 ->exists();
 
-            // ✅ Cek apakah sedang Dinas Luar via DetailSuratTugas (Ketua/Individu)
             $isDinasLuarDetail = DetailSuratTugas::where('pegawai_id', $pegawai->id)
                 ->whereDate('tanggal_mulai', '<=', $tanggalStr)
                 ->whereDate('tanggal_selesai', '>=', $tanggalStr)
                 ->exists();
 
-            // ✅ Cek apakah sedang Dinas Luar via AnggotaSuratTugas (Anggota Tim)
             $isDinasLuarAnggota = AnggotaSuratTugas::where('pegawai_id', $pegawai->id)
-            ->whereHas('suratTugas.detail', function ($query) use ($tanggalStr) {
-                $query->whereDate('tanggal_mulai', '<=', $tanggalStr)
-                    ->whereDate('tanggal_selesai', '>=', $tanggalStr);
-            })
-            ->exists();
+                ->whereHas('suratTugas.detail', function ($query) use ($tanggalStr) {
+                    $query->whereDate('tanggal_mulai', '<=', $tanggalStr)
+                        ->whereDate('tanggal_selesai', '>=', $tanggalStr);
+                })
+                ->exists();
 
             $isDinasLuar = $isDinasLuarDetail || $isDinasLuarAnggota;
 
@@ -145,7 +141,6 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
                     ->whereIn('jenis_ijin', ['Lupa Absen Pulang'])
                     ->exists();
 
-            // ✅ Penentuan status akhir
             if ($isLibur) {
                 $status = 'Libur';
             } elseif ($isCuti) {
@@ -169,26 +164,23 @@ class RekapKehadiranIExport implements FromArray, WithHeadings, WithTitle
             }
 
             $data[] = [
-                $i === 1 ? $pegawai->nama : '',
-                $i === 1 ? $pegawai->nip : '',
-                $tanggal->format('d-m-Y'),
-                $waktuDatang,
-                $waktuPulang,
-                $status,
-                $durasi,
+                'nama' => $i === 1 ? $pegawai->nama : '',
+                'nip' => $i === 1 ? $pegawai->nip : '',
+                'tanggal' => $tanggal->format('d-m-Y'),
+                'waktu_datang' => $waktuDatang,
+                'waktu_pulang' => $waktuPulang,
+                'status' => $status,
+                'durasi' => $durasi,
             ];
         }
 
-        return $data;
-    }
-
-    public function headings(): array
-    {
-        return ['Nama', 'NIP', 'Tanggal', 'Jam Masuk', 'Jam Pulang', 'Status', 'Durasi Kerja'];
-    }
-
-    public function title(): string
-    {
-        return 'Rekap Kehadiran';
+        $monthName = Carbon::create($this->year, $this->month)->translatedFormat('F Y');
+        
+        return view('rekapkehadiran::pdf.kehadiran_i', [
+            'data' => $data,
+            'pegawai' => $pegawai,
+            'monthName' => $monthName,
+            'headings' => ['Nama', 'NIP', 'Tanggal', 'Jam Masuk', 'Jam Pulang', 'Status', 'Durasi Kerja']
+        ]);
     }
 }

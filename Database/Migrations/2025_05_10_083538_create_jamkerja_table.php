@@ -17,6 +17,9 @@ class CreateJamkerjaTable extends Migration
             $table->id();
             $table->string('nama');
             $table->string('jenis');
+            $table->string('skema_absen');
+            $table->string('jam_istirahat_keluar')->nullable();
+            $table->string('jam_istirahat_masuk')->nullable();
             $table->date('tanggal_mulai');
             $table->date('tanggal_selesai');
             $table->time('jam_masuk')->nullable();
